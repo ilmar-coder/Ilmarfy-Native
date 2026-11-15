@@ -50,6 +50,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import br.com.ilmar.ilmarfy.core.Core
+import br.com.ilmar.ilmarfy.core.Updater
 import br.com.ilmar.ilmarfy.core.friendly
 import br.com.ilmar.ilmarfy.playback.PlayerConnection
 import kotlinx.coroutines.delay
@@ -96,6 +97,10 @@ fun MainScreen() {
     LaunchedEffect(downloadMsg) {
         downloadMsg?.let { message(it); Downloads.consumeMessage() }
     }
+    // Procura versão nova do app ao abrir (falha silenciosa: sem internet, tenta na próxima)
+    LaunchedEffect(Unit) { runCatching { Updater.check() } }
+    UpdateDialog()
+
     val playerMsg by PlayerConnection.messages.collectAsState()
     LaunchedEffect(playerMsg) {
         playerMsg?.let { message(it); PlayerConnection.consumeMessage() }

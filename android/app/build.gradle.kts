@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+fun props(file: File) = Properties().apply { if (file.exists()) file.inputStream().use { load(it) } }
+
+// Versão controlada pelo release.sh
+val version = props(rootProject.file("version.properties"))
+// Chave de assinatura fixa (fora do repositório); todas as versões precisam dela para atualizar no celular
+val keystore = props(rootProject.file("local.properties")).getProperty("ilmarfy.keystore")
 
 android {
     namespace = "br.com.ilmar.ilmarfy"
@@ -11,20 +20,32 @@ android {
         applicationId = "br.com.ilmar.ilmarfy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = version.getProperty("versionCode").toInt()
+        versionName = version.getProperty("versionName")
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            // Instalação direta (sem Play Store): assina com a chave de debug até existir uma chave própria
-            signingConfig = signingConfigs.getByName("debug")
+    signingConfigs {
+        create("ilmarfy") {
+            storeFile = file(keystore ?: "${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 
-    buildFeatures { compose = true }
+    buildTypes {
+        debug { signingConfig = signingConfigs.getByName("ilmarfy") }
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("ilmarfy")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -32,17 +53,21 @@ android {
     }
 }
 
+// Saída do núcleo Rust (biblioteca .so e classes Kotlin do UniFFI), dentro do build fora do iCloud
+val rustOut = layout.buildDirectory.dir("rust").get()
+
 // Classes Kotlin geradas pelo UniFFI a partir do núcleo em Rust (build-rust.sh)
 androidComponents {
     onVariants { variant ->
-        variant.sources.kotlin?.addStaticSourceDirectory("build/generated/uniffi")
+        variant.sources.kotlin?.addStaticSourceDirectory(rustOut.dir("uniffi").asFile.path)
+        variant.sources.jniLibs?.addStaticSourceDirectory(rustOut.dir("jniLibs").asFile.path)
     }
 }
 
-// Compila o núcleo Rust (libilmarfy_ffi.so) e gera os bindings antes de cada build
+// Compila o núcleo Rust e gera os bindings antes de cada build
 val buildRust by tasks.registering(Exec::class) {
     workingDir = rootProject.projectDir
-    commandLine("./build-rust.sh")
+    commandLine("./build-rust.sh", rustOut.asFile.path)
 }
 tasks.named("preBuild") { dependsOn(buildRust) }
 

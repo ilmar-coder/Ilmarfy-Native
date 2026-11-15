@@ -1,4 +1,5 @@
 /target
+*.nosync
 .DS_Store
 
 # Android

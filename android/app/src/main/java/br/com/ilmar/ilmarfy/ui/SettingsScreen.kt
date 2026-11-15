@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import br.com.ilmar.ilmarfy.core.Core
+import br.com.ilmar.ilmarfy.core.Updater
 import br.com.ilmar.ilmarfy.playback.PlayerConnection
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -76,6 +77,16 @@ fun SettingsScreen(nav: NavHostController, onMessage: (String) -> Unit) {
         Section("Offline") {
             Info("Músicas no aparelho", "$offlineCount (%.1f MB)".format(offlineBytes.toDouble() / 1_048_576))
             TextButton(onClick = { nav.navigate("downloaded") }) { Text("Ver músicas baixadas") }
+        }
+        Section("App") {
+            Info("Versão", Updater.currentVersion)
+            OutlinedButton(onClick = {
+                scope.launch {
+                    runCatching { Updater.check() }
+                        .onSuccess { if (it == null) onMessage("Você já está na versão mais recente") }
+                        .onFailure { onMessage("Não foi possível verificar: ${it.message}") }
+                }
+            }, modifier = Modifier.fillMaxWidth()) { Text("Verificar atualizações") }
         }
         Section("") {
             Button(

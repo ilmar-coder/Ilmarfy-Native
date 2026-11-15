@@ -1,0 +1,3 @@
+# Fora do iCloud (Documentos é sincronizado): pastas *.nosync não sobem
+[build]
+target-dir = "target.nosync"
