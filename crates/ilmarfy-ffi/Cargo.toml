@@ -1,0 +1,18 @@
+[package]
+name = "ilmarfy-ffi"
+description = "Ponte UniFFI do ilmarfy-core para Kotlin (Android)"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ilmarfy_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+ilmarfy-core = { version = "0.1.0", path = "../ilmarfy-core" }
+thiserror = "2.0.21"
+uniffi = { version = "0.32.2", features = ["cli"] }
