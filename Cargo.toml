@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ilmarfy-core", "crates/ilmarfy-cli", "crates/ilmarfy-ffi"]
+members = ["crates/ilmarfy-core", "crates/ilmarfy-cli", "crates/ilmarfy-ffi", "crates/ilmarfy-desktop"]
 
 [workspace.package]
 version = "0.1.0"

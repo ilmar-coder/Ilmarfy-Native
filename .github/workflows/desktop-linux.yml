@@ -1,0 +1,39 @@
+name: Desktop Linux (RPM)
+
+# Gera o RPM do Ilmarfy para Fedora. Rode pela aba Actions ("Run workflow")
+# ou crie uma tag desktop-vX.Y.Z para publicar uma Release com o RPM.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  rpm:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Dependências do Fedora
+        run: |
+          dnf install -y git gcc gcc-c++ rust cargo pkgconf-pkg-config \
+            alsa-lib-devel dbus-devel fontconfig-devel freetype-devel \
+            libxkbcommon-devel wayland-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel mesa-libGL-devel
+      - uses: actions/checkout@v4
+      - name: Compilar
+        run: cargo build --release -p ilmarfy-desktop
+      - name: Gerar RPM
+        run: |
+          cargo install cargo-generate-rpm --locked
+          ~/.cargo/bin/cargo-generate-rpm -p crates/ilmarfy-desktop --target-dir target.nosync
+          ls -la target.nosync/generate-rpm/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ilmarfy-rpm
+          path: target.nosync/generate-rpm/*.rpm
+      - name: Publicar Release (tags desktop-v*)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target.nosync/generate-rpm/*.rpm

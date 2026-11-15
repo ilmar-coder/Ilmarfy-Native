@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Ilmarfy
+GenericName=Player de música
+Comment=Suas músicas, playlists e Flow do Ilmarfy
+Exec=ilmarfy
+Icon=ilmarfy
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=música;music;player;ilmarfy;
+StartupWMClass=ilmarfy

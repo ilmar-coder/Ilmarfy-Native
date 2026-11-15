@@ -299,11 +299,18 @@ impl Api {
 
     /// Baixa o arquivo da faixa para `dest` (grava em `.part` e renomeia no fim).
     /// `progress(baixados, total)` é chamado durante o download; devolva `false` para cancelar.
-    pub fn download_track(&self, track: &Track, dest: &Path, mut progress: impl FnMut(u64, u64) -> bool) -> Result<u64> {
-        let resp = self
-            .authed(self.download_agent.get(&self.track_stream_url(track)))
-            .call()
-            .map_err(network)?;
+    pub fn download_track(&self, track: &Track, dest: &Path, progress: impl FnMut(u64, u64) -> bool) -> Result<u64> {
+        self.download_url(&self.track_stream_url(track), dest, progress)
+    }
+
+    /// Baixa a prévia (áudio do YouTube, via servidor) de uma faixa do Flow
+    pub fn download_preview(&self, video_id: &str, dest: &Path, progress: impl FnMut(u64, u64) -> bool) -> Result<u64> {
+        self.download_url(&self.preview_url(video_id), dest, progress)
+    }
+
+    /// Baixa uma URL do servidor (com o token) para `dest`, gravando em `.part` e renomeando no fim
+    pub fn download_url(&self, url: &str, dest: &Path, mut progress: impl FnMut(u64, u64) -> bool) -> Result<u64> {
+        let resp = self.authed(self.download_agent.get(url)).call().map_err(network)?;
         let mut resp = Self::check(resp)?;
         let total = resp
             .headers()

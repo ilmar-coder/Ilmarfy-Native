@@ -80,6 +80,15 @@ impl Ilmarfy {
         }
     }
 
+    /// Revoga o token deste aparelho no servidor sem mexer no estado local
+    /// (para quem guarda o núcleo compartilhado e vai descartá-lo em seguida)
+    pub fn revoke_this_device(&self) -> Result<()> {
+        match self.api.revoke_device("current") {
+            Ok(()) | Err(Error::Unauthorized(_)) | Err(Error::NotFound(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn is_logged_in(&self) -> bool {
         self.api.auth_header().is_some()
     }

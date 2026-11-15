@@ -9,7 +9,7 @@ biblioteca e playlists do Ilmarfy web — sem alterar o web.
 | `crates/ilmarfy-cli` — linha de comando para testar o núcleo | ✅ |
 | `crates/ilmarfy-ffi` — ponte UniFFI do núcleo para Kotlin | ✅ |
 | `android/` — app Android (Kotlin + Jetpack Compose + Media3) | ✅ v0.1 |
-| App de desktop para Mac e Fedora (Rust + egui; RPM gerado pelo GitHub Actions) | depois do Android |
+| `crates/ilmarfy-desktop` — Mac e Fedora (Rust + egui + rodio) | ✅ v0.1 |
 
 ## O que o núcleo faz
 
@@ -41,6 +41,29 @@ O Gradle chama `android/build-rust.sh`, que compila o núcleo para arm64 e gera 
 - Offline: baixe playlists ou faixas; sem internet a fila usa só o que está baixado
 - Plays contados no aparelho (30 s ou metade da faixa) e enviados na sincronização
 - Telas: Início, Buscar, Biblioteca (playlists, artistas, offline), Flow (👎/🚫/Restritos), Tocando agora (letra sincronizada e fila), Configurações
+
+## Publicar uma versão Android (atualiza pelo app)
+
+```bash
+cd android
+./release.sh --bump patch "O que mudou"   # compila, publica no servidor e guarda cópia em ~/Downloads
+```
+
+Os celulares recebem o aviso ao abrir o app (ou em Configurações → Verificar atualizações).
+A chave de assinatura fica em `~/Documents/Ilmarfy-Native-chaves/` (fora do repositório) — **faça backup**;
+sem ela o Android não aceita atualizar o app.
+
+## Desktop (Mac e Fedora)
+
+- **Mac**: `./desktop/bundle-macos.sh` instala `/Applications/Ilmarfy.app`
+- **Fedora**: o GitHub gera o RPM — crie uma tag `desktop-vX.Y.Z` (vira uma Release com o `.rpm`)
+  ou rode o workflow "Desktop Linux (RPM)" na aba Actions. Instale com `sudo dnf install ./ilmarfy-*.rpm`.
+
+Recursos: biblioteca, busca, artistas, playlists, favoritos, offline, Flow (👎/🚫/Restritos), letra sincronizada,
+fila, aleatório/repetir, teclas de mídia e "Tocando agora" (Mac) / MPRIS (Linux). As músicas tocam de um cache local
+(a próxima já é baixada enquanto a atual toca); as baixadas para offline tocam direto.
+
+> Documentos é sincronizado com o iCloud: os builds ficam em pastas `*.nosync` para o iCloud não duplicar arquivos.
 
 ## Usando o CLI
 
