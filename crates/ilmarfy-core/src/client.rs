@@ -261,6 +261,21 @@ impl Ilmarfy {
         Ok(p)
     }
 
+    /// Move a faixa para antes de `before` (ou para o fim). Usa a lista completa da playlist,
+    /// já que a tela pode estar mostrando só parte dela.
+    pub fn move_in_playlist(&self, playlist_id: &str, track_id: &str, before: Option<&str>) -> Result<Playlist> {
+        let current = self
+            .library
+            .playlists()?
+            .into_iter()
+            .find(|p| p.id == playlist_id)
+            .ok_or_else(|| Error::NotFound("playlist".into()))?;
+        let order = moved(&current.track_ids, track_id, before);
+        let p = self.api.reorder_playlist(playlist_id, &order)?;
+        self.library.upsert_playlist(&p)?;
+        Ok(p)
+    }
+
     pub fn remove_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
         self.api.remove_from_playlist(playlist_id, track_id)?;
         // A rota de remoção não devolve a playlist; atualiza a cópia local na mão
@@ -309,9 +324,29 @@ impl Ilmarfy {
     }
 }
 
+/// `ids` com `id` tirado de onde estava e posto antes de `before` (ou no fim)
+fn moved(ids: &[String], id: &str, before: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = ids.iter().filter(|x| *x != id).cloned().collect();
+    if !ids.iter().any(|x| x == id) {
+        return ids.to_vec();
+    }
+    let at = before.and_then(|b| out.iter().position(|x| x == b)).unwrap_or(out.len());
+    out.insert(at, id.to_string());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_coloca_antes_da_faixa_alvo() {
+        let ids: Vec<String> = ["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(moved(&ids, "d", Some("b")), ["a", "d", "b", "c"]);
+        assert_eq!(moved(&ids, "a", Some("d")), ["b", "c", "a", "d"]);
+        assert_eq!(moved(&ids, "b", None), ["a", "c", "d", "b"]);
+        assert_eq!(moved(&ids, "x", Some("a")), ids);
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ilmarfy-core-{name}-{}", std::process::id()));

@@ -20,6 +20,13 @@ mod admin;
 
 const ROW_H: f32 = 56.0;
 
+/// Música sendo arrastada (para soltar numa playlist da barra lateral ou reordenar)
+#[derive(Clone)]
+struct DragTrack {
+    id: String,
+    title: String,
+}
+
 #[derive(Clone, PartialEq)]
 enum View {
     Home,
@@ -74,6 +81,8 @@ enum TrackAction {
     Edit,
     Fix,
     Delete,
+    /// Mover na playlist: (playlist, faixa arrastada, antes de qual)
+    MoveTo(String, String, Option<String>),
 }
 
 pub struct App {
@@ -735,7 +744,7 @@ impl App {
     }
 
     /// Item da biblioteca: capa pequena + nome + descrição
-    fn library_item(&mut self, ui: &mut Ui, label: &str, subtitle: &str, view: View, cover: impl FnOnce(&mut Ui, Rect)) {
+    fn library_item(&mut self, ui: &mut Ui, label: &str, subtitle: &str, view: View, cover: impl FnOnce(&mut Ui, Rect)) -> egui::Response {
         let selected = self.view == view;
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 60.0), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
@@ -751,6 +760,36 @@ impl App {
         paint_truncated(ui, egui::pos2(x, rect.center().y + 11.0), subtitle, ui::font(13.0), SUB, w);
         if resp.clicked() {
             self.go(view);
+        }
+        resp
+    }
+
+    /// Aceita uma música arrastada sobre um item da biblioteca (playlist ou curtidas)
+    fn accept_track_drop(&mut self, ui: &Ui, resp: &egui::Response, playlist: Option<(String, String)>) {
+        if resp.dnd_hover_payload::<DragTrack>().is_some() {
+            ui.painter()
+                .rect_stroke(resp.rect, 6.0, egui::Stroke::new(2.0, GREEN), egui::StrokeKind::Inside);
+        }
+        let Some(drag) = resp.dnd_release_payload::<DragTrack>() else {
+            return;
+        };
+        let ctx = ui.ctx().clone();
+        let drag = (*drag).clone();
+        match playlist {
+            Some((pid, name)) => self.spawn(&ctx, move |c| match c.add_to_playlist(&pid, &drag.id) {
+                Ok(_) => Event::Message(format!("\"{}\" adicionada a \"{name}\"", drag.title)),
+                Err(e) => Event::Message(e.to_string()),
+            }),
+            None => {
+                if self.favorites.contains(&drag.id) {
+                    self.toast(&ctx, format!("\"{}\" já está nas curtidas", drag.title));
+                } else {
+                    self.spawn(&ctx, move |c| match c.toggle_favorite(&drag.id) {
+                        Ok(_) => Event::Message(format!("♥ \"{}\" nas curtidas", drag.title)),
+                        Err(e) => Event::Message(e.to_string()),
+                    });
+                }
+            }
         }
     }
 
@@ -801,7 +840,7 @@ impl App {
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     let fav = self.favorites.len();
-                    self.library_item(
+                    let resp = self.library_item(
                         ui,
                         "Músicas curtidas",
                         &format!("Playlist • {fav} músicas"),
@@ -810,6 +849,7 @@ impl App {
                             paint_special(ui, r, Color32::from_rgb(0x45, 0x0A, 0xF5), Color32::from_rgb(0xC4, 0xEF, 0xD9), "♥");
                         },
                     );
+                    self.accept_track_drop(ui, &resp, None);
                     self.library_item(ui, "Ilmarfy Flow", "Descobertas para você", View::Flow, |ui, r| {
                         paint_special(
                             ui,
@@ -846,7 +886,7 @@ impl App {
                     for p in lists {
                         let covers = self.playlist_covers(&p);
                         let n = p.track_ids.len();
-                        self.library_item(
+                        let resp = self.library_item(
                             ui,
                             &p.name,
                             &format!("Playlist • {n} músicas"),
@@ -855,6 +895,7 @@ impl App {
                                 ui::mosaic_at(ui, r, &covers, &p.name, 4.0);
                             },
                         );
+                        self.accept_track_drop(ui, &resp, Some((p.id.clone(), p.name.clone())));
                     }
                     let artists = self.artists.len();
                     self.library_item(ui, "Artistas", &format!("{artists} artistas"), View::Artists, |ui, r| {
@@ -975,12 +1016,72 @@ impl App {
         let current = self.current_track_id();
         let playing = self.is_playing();
         let mut action: Option<(usize, TrackAction)> = None;
+        // Playlist que aceita reordenar arrastando (a busca e as outras listas não têm ordem própria)
+        let reorder = match &self.view {
+            View::Playlist(id) => Some(id.clone()),
+            View::Favorites => self.favorites_id.clone(),
+            _ => None,
+        };
+        let dragging = egui::DragAndDrop::has_payload_of_type::<DragTrack>(ui.ctx());
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, ROW_H, tracks.len(), |ui, range| {
+                // Rolagem automática ao arrastar perto das bordas
+                if dragging && let Some(pos) = ui.ctx().pointer_hover_pos() {
+                    let clip = ui.clip_rect();
+                    if clip.x_range().contains(pos.x) {
+                        if pos.y < clip.top() + 48.0 && pos.y > clip.top() - 8.0 {
+                            ui.scroll_with_delta(Vec2::new(0.0, 10.0));
+                        } else if pos.y > clip.bottom() - 48.0 && pos.y < clip.bottom() + 8.0 {
+                            ui.scroll_with_delta(Vec2::new(0.0, -10.0));
+                        }
+                        ui.ctx().request_repaint();
+                    }
+                }
                 for i in range {
                     let t = &tracks[i];
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click_and_drag());
+                    resp.dnd_set_drag_payload(DragTrack {
+                        id: t.id.clone(),
+                        title: t.title.clone(),
+                    });
+                    if resp.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                            egui::Area::new(egui::Id::unique("arrastando"))
+                                .order(egui::Order::Tooltip)
+                                .fixed_pos(pos + Vec2::new(14.0, 10.0))
+                                .interactable(false)
+                                .show(ui.ctx(), |ui| {
+                                    egui::Frame::new()
+                                        .fill(Color32::from_rgb(0x2E, 0x77, 0xD0))
+                                        .corner_radius(6)
+                                        .inner_margin(egui::Margin::symmetric(10, 6))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(&t.title).font(ui::font_bold(13.0)).color(TEXT));
+                                        });
+                                });
+                        }
+                    }
+                    if let Some(pid) = &reorder
+                        && let Some(pos) = ui.ctx().pointer_hover_pos()
+                        && resp.dnd_hover_payload::<DragTrack>().is_some_and(|d| d.id != t.id)
+                    {
+                        let upper = pos.y < rect.center().y;
+                        let y = if upper { rect.top() } else { rect.bottom() };
+                        ui.painter()
+                            .hline(rect.left() + 12.0..=rect.right() - 12.0, y, egui::Stroke::new(2.0, GREEN));
+                        if let Some(d) = resp.dnd_release_payload::<DragTrack>() {
+                            let before = if upper {
+                                Some(t.id.clone())
+                            } else {
+                                tracks.get(i + 1).map(|n| n.id.clone())
+                            };
+                            if before.as_deref() != Some(d.id.as_str()) {
+                                action = Some((i, TrackAction::MoveTo(pid.clone(), d.id.clone(), before)));
+                            }
+                        }
+                    }
                     let row = rect.shrink2(Vec2::new(12.0, 0.0));
                     let is_current = current.as_deref() == Some(t.id.as_str());
                     if resp.hovered() {
@@ -1167,6 +1268,21 @@ impl App {
             TrackAction::Edit => self.start_edit(t),
             TrackAction::Fix => self.fix_metadata(ctx, t),
             TrackAction::Delete => self.ask_delete(t),
+            TrackAction::MoveTo(pid, id, before) => {
+                // Mostra a nova ordem na hora; o servidor confirma em seguida
+                if let Some(from) = self.view_tracks.iter().position(|x| x.id == id) {
+                    let item = self.view_tracks.remove(from);
+                    let at = before
+                        .as_ref()
+                        .and_then(|b| self.view_tracks.iter().position(|x| &x.id == b))
+                        .unwrap_or(self.view_tracks.len());
+                    self.view_tracks.insert(at, item);
+                }
+                self.spawn(ctx, move |c| match c.move_in_playlist(&pid, &id, before.as_deref()) {
+                    Ok(_) => Event::Changed,
+                    Err(e) => Event::Message(format!("Não deu para mover: {e}")),
+                });
+            }
         }
     }
 
@@ -1503,7 +1619,7 @@ impl App {
                 let summary = format!("{} músicas • {} álbuns", tracks.len(), self.albums.len());
                 self.page_header(ui, "Artista", &name, &summary, ui::seed_color(&name), |ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(200.0), Sense::hover());
-                    ui::cover_at(ui, rect, &cover_url, &name, 100.0);
+                    ui::cover_at(ui, rect, &cover_url, &name, 8.0);
                 });
                 self.action_row(ui, &tracks, |_, _| {});
             }
@@ -1538,7 +1654,7 @@ impl App {
                                 ui.painter().rect_filled(rect, 8.0, HOVER);
                             }
                             let cover = Rect::from_min_size(rect.min + Vec2::new(12.0, 12.0), Vec2::splat(152.0));
-                            ui::cover_at(ui, cover, &a.cover_url, &a.name, 76.0);
+                            ui::cover_at(ui, cover, &a.cover_url, &a.name, 6.0);
                             paint_truncated(
                                 ui,
                                 egui::pos2(cover.left(), cover.bottom() + 18.0),
@@ -1550,7 +1666,11 @@ impl App {
                             paint_truncated(
                                 ui,
                                 egui::pos2(cover.left(), cover.bottom() + 38.0),
-                                &format!("{} músicas", a.track_count),
+                                &if a.track_count == 1 {
+                                    "1 música".to_string()
+                                } else {
+                                    format!("{} músicas", a.track_count)
+                                },
                                 ui::font(13.0),
                                 SUB,
                                 152.0,
@@ -2399,6 +2519,47 @@ mod tests {
             h.state_mut().go(View::Playlist(id));
             wait(&mut h, 3, |_| false);
             snap(&mut h, "d4-playlist");
+            // Arrastar: segura a 1ª música, passa pela 2ª e por uma playlist da barra lateral,
+            // e solta num lugar neutro (o topo), para não mudar nada no servidor
+            let ev = |h: &mut Harness<'_, App>, e: egui::Event| {
+                h.input_mut().events.push(e);
+                h.step();
+            };
+            let mv = |h: &mut Harness<'_, App>, x: f32, y: f32| {
+                for _ in 0..3 {
+                    h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(x, y)));
+                    h.step();
+                }
+            };
+            mv(&mut h, 700.0, 452.0);
+            ev(
+                &mut h,
+                egui::Event::PointerButton {
+                    pos: egui::pos2(700.0, 452.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            );
+            for y in [460.0, 480.0, 500.0, 525.0] {
+                mv(&mut h, 700.0, y);
+            }
+            snap(&mut h, "d4b-arrastando-na-lista");
+            for (x, y) in [(500.0, 600.0), (300.0, 640.0), (150.0, 630.0)] {
+                mv(&mut h, x, y);
+            }
+            snap(&mut h, "d4c-arrastando-na-barra");
+            mv(&mut h, 720.0, 30.0);
+            ev(
+                &mut h,
+                egui::Event::PointerButton {
+                    pos: egui::pos2(720.0, 30.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            );
+            wait(&mut h, 1, |_| false);
         }
 
         h.state_mut().go(View::Artists);

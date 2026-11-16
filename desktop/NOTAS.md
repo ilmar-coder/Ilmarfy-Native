@@ -1,3 +1,2 @@
-- Adicionar músicas: busca no YouTube Music com prévia, álbum inteiro, links de playlist ou de vídeo, e fila de downloads do servidor (pausar, continuar, cancelar).
-- Menu das músicas: editar informações, corrigir capa e álbum automaticamente e apagar do servidor.
-- Configurações: procurar e limpar duplicadas, e salvar backup da biblioteca em Downloads.
+- Arrastar e soltar como no Spotify: arraste uma música até uma playlist (ou Músicas curtidas) na barra lateral para adicionar, e arraste dentro da playlist para mudar a ordem.
+- Artistas com capas quadradas, como no início.

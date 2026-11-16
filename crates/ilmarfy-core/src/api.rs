@@ -229,6 +229,12 @@ impl Api {
         self.send("POST", &path, Some(json!({ "track_id": track_id })))
     }
 
+    /// Grava a nova ordem (precisa ser a mesma lista de faixas; senão o servidor devolve 409)
+    pub fn reorder_playlist(&self, playlist_id: &str, track_ids: &[String]) -> Result<Playlist> {
+        let path = format!("/api/spotify/playlists/{}/tracks", encode_path_segment(playlist_id));
+        self.send("PUT", &path, Some(json!({ "track_ids": track_ids })))
+    }
+
     pub fn remove_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<serde_json::Value> {
         let path = format!(
             "/api/spotify/playlists/{}/tracks/{}",
