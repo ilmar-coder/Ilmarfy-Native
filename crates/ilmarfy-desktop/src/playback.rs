@@ -99,9 +99,8 @@ impl Playback {
         let (fetch_tx, fetch_rx) = channel();
         let _ = std::fs::create_dir_all(&cache_dir);
         trim_cache(&cache_dir);
-        // Sem placa de som (ex.: testes), o app abre do mesmo jeito, só não toca
-        let sink = rodio::DeviceSinkBuilder::open_default_sink().ok();
-        let player = sink.as_ref().map(|s| rodio::Player::connect_new(s.mixer()));
+        // Sem placa de som (ex.: testes), o app abre do mesmo jeito; tenta de novo na hora de tocar
+        let (sink, player) = open_output().map(|(s, p)| (Some(s), Some(p))).unwrap_or((None, None));
         Self {
             core,
             _sink: sink,
@@ -358,12 +357,25 @@ impl Playback {
         self.cache_dir.join(format!("{safe}.{ext}"))
     }
 
+    /// Abre a saída de áudio se ainda não estiver aberta (ex.: falhou na criação, fone conectado depois)
+    fn ensure_output(&mut self) -> Result<(), String> {
+        if self.player.is_some() {
+            return Ok(());
+        }
+        let (sink, player) = open_output()?;
+        player.set_volume(self.volume * self.volume);
+        self._sink = Some(sink);
+        self.player = Some(player);
+        Ok(())
+    }
+
     fn start(&mut self, path: &Path) {
-        let Some(player) = &self.player else {
-            self.message = Some("Nenhuma saída de áudio disponível".into());
+        if let Err(e) = self.ensure_output() {
+            self.message = Some(format!("Sem saída de áudio: {e}"));
             self.status = Status::Idle;
             return;
-        };
+        }
+        let Some(player) = &self.player else { return };
         let decoded = std::fs::File::open(path)
             .map_err(|e| e.to_string())
             .and_then(|f| rodio::Decoder::try_from(f).map_err(|e| e.to_string()));
@@ -454,6 +466,14 @@ impl Playback {
         }
         before != self.current
     }
+}
+
+fn open_output() -> Result<(rodio::MixerDeviceSink, rodio::Player), String> {
+    let builder = rodio::DeviceSinkBuilder::from_default_device().map_err(|e| e.to_string())?;
+    let mut sink = builder.open_sink_or_fallback().map_err(|e| e.to_string())?;
+    sink.log_on_drop(false);
+    let player = rodio::Player::connect_new(sink.mixer());
+    Ok((sink, player))
 }
 
 fn pseudo_random(n: usize) -> usize {

@@ -2,6 +2,7 @@
 
 mod app;
 mod playback;
+mod ui;
 
 fn data_dir() -> std::path::PathBuf {
     std::env::var_os("ILMARFY_DESKTOP_DATA")
