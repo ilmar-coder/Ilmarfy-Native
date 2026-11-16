@@ -80,9 +80,18 @@ fun LibraryScreen(nav: NavHostController, onMessage: (String) -> Unit) {
 private fun PlaylistsTab(nav: NavHostController, onMessage: (String) -> Unit) {
     val version by Core.version.collectAsState()
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    var covers by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     var creating by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(version) { playlists = runCatching { Core.io { it.playlists() } }.getOrDefault(emptyList()) }
+    LaunchedEffect(version) {
+        runCatching {
+            Core.io { c ->
+                val lists = c.playlists()
+                covers = lists.associate { p -> p.id to c.playlistTracks(p.id).map { it.coverUrl }.take(12) }
+                lists
+            }
+        }.onSuccess { playlists = it }
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         item {
             ListRow(title = "Nova playlist", subtitle = null, icon = { Icon(Icons.Rounded.Add, null, tint = IlmarfyGreen) }) { creating = true }
@@ -92,7 +101,10 @@ private fun PlaylistsTab(nav: NavHostController, onMessage: (String) -> Unit) {
             ListRow(
                 title = p.name,
                 subtitle = "${p.trackIds.size} faixas",
-                icon = { if (fav) Icon(Icons.Rounded.Favorite, null, tint = IlmarfyGreen) else Cover(null, 48.dp) },
+                icon = {
+                    if (fav) SpecialCover(Icons.Rounded.Favorite, LikedTop, LikedBottom, 48.dp, corner = 4.dp)
+                    else PlaylistCover(covers[p.id].orEmpty(), 48.dp, p.name, corner = 4.dp)
+                },
             ) { nav.navigate("playlist/${p.id}") }
         }
     }
@@ -124,7 +136,7 @@ private fun ArtistsTab(nav: NavHostController) {
     LaunchedEffect(version) { artists = runCatching { Core.io { it.artists() } }.getOrDefault(emptyList()) }
     LazyColumn(Modifier.fillMaxSize()) {
         items(artists, key = { it.name }) { a ->
-            ListRow(a.name, "${a.trackCount} faixas", icon = { Cover(a.coverUrl, 48.dp, corner = 24.dp) }) { nav.openArtist(a.name) }
+            ListRow(a.name, "${a.trackCount} faixas", icon = { Cover(a.coverUrl, 48.dp, corner = 24.dp, seed = a.name) }) { nav.openArtist(a.name) }
         }
     }
 }
@@ -175,12 +187,16 @@ fun DetailHeader(
     subtitle: String,
     tracks: List<Track>,
     actions: @Composable () -> Unit = {},
+    cover: (@Composable () -> Unit)? = null,
 ) {
     Column(Modifier.padding(bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Voltar") }
             Spacer(Modifier.weight(1f))
             actions()
+        }
+        if (cover != null) {
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().padding(bottom = 16.dp), contentAlignment = Alignment.Center) { cover() }
         }
         Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 16.dp))
         Text(subtitle, color = Subtext, modifier = Modifier.padding(horizontal = 16.dp))
@@ -225,6 +241,11 @@ fun PlaylistScreen(nav: NavHostController, id: String, onMessage: (String) -> Un
             tracks,
             actions = {
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Rounded.Delete, "Apagar playlist") }
+            },
+            cover = {
+                val name = playlist?.name.orEmpty()
+                if (name.equals("Favoritos 2026", ignoreCase = true)) SpecialCover(Icons.Rounded.Favorite, LikedTop, LikedBottom, 200.dp, corner = 8.dp)
+                else PlaylistCover(tracks.map { it.coverUrl }, 200.dp, name, corner = 8.dp)
             },
         )
         when {
@@ -272,7 +293,9 @@ fun FavoritesScreen(nav: NavHostController, onMessage: (String) -> Unit) {
     var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
     LaunchedEffect(version) { tracks = runCatching { Core.io { it.favorites() } }.getOrDefault(emptyList()) }
     Column(Modifier.fillMaxSize()) {
-        DetailHeader(nav, "Favoritos", "${tracks.size} faixas", tracks)
+        DetailHeader(nav, "Músicas curtidas", "${tracks.size} faixas", tracks, cover = {
+            SpecialCover(Icons.Rounded.Favorite, LikedTop, LikedBottom, 200.dp, corner = 8.dp)
+        })
         TrackList(tracks, onMessage)
     }
 }
@@ -299,7 +322,9 @@ fun ArtistScreen(nav: NavHostController, name: String, onMessage: (String) -> Un
         }
     }
     Column(Modifier.fillMaxSize()) {
-        DetailHeader(nav, name, "${tracks.size} faixas • ${albums.size} álbuns", tracks)
+        DetailHeader(nav, name, "${tracks.size} faixas • ${albums.size} álbuns", tracks, cover = {
+            Cover(tracks.firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl, 200.dp, corner = 100.dp, seed = name)
+        })
         TrackList(tracks, onMessage)
     }
 }

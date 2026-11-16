@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shuffle
@@ -46,7 +47,7 @@ import uniffi.ilmarfy_ffi.Track
 import uniffi.ilmarfy_ffi.TrackOrder
 import java.util.Calendar
 
-private data class HomeData(val count: UInt, val top: List<Track>, val recent: List<Track>, val all: List<Track>, val playlists: List<Playlist>)
+private data class HomeData(val count: UInt, val top: List<Track>, val recent: List<Track>, val all: List<Track>, val playlists: List<Playlist>, val covers: Map<String, List<String>>)
 
 private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
     in 5..11 -> "Bom dia"
@@ -63,7 +64,15 @@ fun HomeScreen(nav: NavHostController, onMessage: (String) -> Unit) {
     LaunchedEffect(version) {
         data = runCatching {
             Core.io {
-                HomeData(it.trackCount(), it.tracks(TrackOrder.MOST_PLAYED).take(20), it.tracks(TrackOrder.RECENTLY_ADDED).take(20), it.tracks(TrackOrder.TITLE), it.playlists())
+                val playlists = it.playlists()
+                HomeData(
+                    it.trackCount(),
+                    it.tracks(TrackOrder.MOST_PLAYED).take(20),
+                    it.tracks(TrackOrder.RECENTLY_ADDED).take(20),
+                    it.tracks(TrackOrder.TITLE),
+                    playlists,
+                    playlists.associate { p -> p.id to it.playlistTracks(p.id).map { t -> t.coverUrl }.take(12) },
+                )
             }
         }.getOrNull()
     }
@@ -107,7 +116,11 @@ fun HomeScreen(nav: NavHostController, onMessage: (String) -> Unit) {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(d.playlists, key = { it.id }) { p ->
                         Column(Modifier.width(120.dp).clickable { nav.navigate("playlist/${p.id}") }) {
-                            Cover(null, 120.dp, corner = 8.dp)
+                            if (p.name.equals("Favoritos 2026", ignoreCase = true)) {
+                                SpecialCover(Icons.Rounded.Favorite, LikedTop, LikedBottom, 120.dp, corner = 8.dp)
+                            } else {
+                                PlaylistCover(d.covers[p.id].orEmpty(), 120.dp, p.name, corner = 8.dp)
+                            }
                             Text(p.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${p.trackIds.size} faixas", color = Subtext, style = MaterialTheme.typography.bodySmall)
                         }
@@ -133,7 +146,7 @@ private fun TrackCarousel(tracks: List<Track>) {
         items(tracks.size, key = { tracks[it].id }) { i ->
             val t = tracks[i]
             Column(Modifier.width(130.dp).clickable { PlayerConnection.play(tracks, i) }) {
-                Cover(t.coverUrl, 130.dp, corner = 8.dp)
+                Cover(t.coverUrl, 130.dp, corner = 8.dp, seed = t.artist + t.album)
                 Spacer(Modifier.height(4.dp))
                 Text(t.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(t.artist, color = Subtext, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -106,7 +106,7 @@ fun NowPlayingScreen(onClose: () -> Unit, onMessage: (String) -> Unit) {
 
         Column(Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp), verticalArrangement = Arrangement.Center) {
             when (panel) {
-                Panel.Cover -> Cover(now.artworkUri?.toString(), 400.dp, Modifier.fillMaxWidth().aspectRatio(1f), corner = 12.dp)
+                Panel.Cover -> Cover(now.artworkUri?.toString(), 400.dp, Modifier.fillMaxWidth().aspectRatio(1f), corner = 12.dp, seed = now.artist + now.album)
                 Panel.Lyrics -> LyricsPanel(lyrics, position)
                 Panel.Queue -> QueuePanel(now.mediaId)
             }
@@ -218,7 +218,7 @@ private fun QueuePanel(currentId: String?) {
                 Modifier.fillMaxWidth().clickable { PlayerConnection.jumpTo(index) }.padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Cover(md.artworkUri?.toString(), 40.dp, corner = 4.dp)
+                Cover(md.artworkUri?.toString(), 40.dp, corner = 4.dp, seed = md.artist.toString() + md.albumTitle.toString())
                 Spacer(Modifier.size(12.dp))
                 Column {
                     Text(

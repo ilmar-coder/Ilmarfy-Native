@@ -128,7 +128,7 @@ fun FlowScreen(onMessage: (String) -> Unit) {
                     Modifier.fillMaxWidth().clickable { PlayerConnection.playFlow(list, i) }.padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Cover(t.coverUrl, 48.dp)
+                    Cover(t.coverUrl, 48.dp, seed = t.artist)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(t.title, fontWeight = FontWeight.SemiBold, color = if (playing) IlmarfyGreen else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)

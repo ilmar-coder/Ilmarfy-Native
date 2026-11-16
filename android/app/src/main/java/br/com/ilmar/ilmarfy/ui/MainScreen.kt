@@ -173,7 +173,7 @@ private fun MiniPlayer(onOpen: () -> Unit) {
             .clickable(onClick = onOpen),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Cover(now.artworkUri?.toString(), 44.dp)
+            Cover(now.artworkUri?.toString(), 44.dp, seed = now.artist + now.album)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(now.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

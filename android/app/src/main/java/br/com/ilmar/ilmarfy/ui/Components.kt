@@ -45,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,21 +60,72 @@ import kotlinx.coroutines.launch
 import uniffi.ilmarfy_ffi.Playlist
 import uniffi.ilmarfy_ffi.Track
 
+/** Cor viva derivada do texto (mesmo artista/álbum => mesma cor), para capas geradas */
+fun seedColor(seed: String): Color {
+    val hue = ((seed.hashCode() % 360) + 360) % 360
+    return Color.hsv(hue.toFloat(), 0.55f, 0.62f)
+}
+
+private fun Color.darker(f: Float = 0.35f) = Color(red * f, green * f, blue * f, alpha)
+
+/**
+ * Capa da música. Sem imagem (ou se ela não carregar) aparece uma capa gerada com a cor do
+ * artista/álbum e uma nota musical, como o Spotify faz.
+ */
 @Composable
-fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, corner: Dp = 6.dp) {
+fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, corner: Dp = 6.dp, seed: String = "") {
+    val base = seedColor(seed.ifBlank { url.orEmpty() })
     Box(
         modifier
             .size(size)
             .clip(RoundedCornerShape(corner))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(Brush.verticalGradient(listOf(base, base.darker()))),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Rounded.MusicNote, null, tint = Subtext, modifier = Modifier.size(size / 2.5f))
+        Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(size / 2.5f))
         if (!url.isNullOrBlank()) {
             AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }
+
+/** Capa de playlist: mosaico 2x2 com as capas das primeiras músicas (ou uma só, se tiver menos de 4) */
+@Composable
+fun PlaylistCover(covers: List<String>, size: Dp, seed: String, modifier: Modifier = Modifier, corner: Dp = 6.dp) {
+    val distinct = covers.filter { it.isNotBlank() }.distinct().take(4)
+    if (distinct.size < 4) {
+        Cover(distinct.firstOrNull(), size, modifier, corner, seed)
+        return
+    }
+    Column(modifier.size(size).clip(RoundedCornerShape(corner))) {
+        for (row in 0..1) {
+            Row(Modifier.weight(1f)) {
+                for (col in 0..1) {
+                    AsyncImage(
+                        model = distinct[row * 2 + col],
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.weight(1f).fillMaxSize(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Capa especial (Músicas curtidas, Offline): gradiente com um ícone */
+@Composable
+fun SpecialCover(icon: androidx.compose.ui.graphics.vector.ImageVector, top: Color, bottom: Color, size: Dp, corner: Dp = 6.dp) {
+    Box(
+        Modifier.size(size).clip(RoundedCornerShape(corner)).background(Brush.linearGradient(listOf(top, bottom))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(size / 2.3f))
+    }
+}
+
+val LikedTop = Color(0xFF450AF5)
+val LikedBottom = Color(0xFFC4EFD9)
 
 fun formatDuration(secs: Long): String = "%d:%02d".format(secs / 60, secs % 60)
 
@@ -96,7 +149,7 @@ fun TrackRow(
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Cover(track.coverUrl, 48.dp)
+        Cover(track.coverUrl, 48.dp, seed = track.artist + track.album)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
