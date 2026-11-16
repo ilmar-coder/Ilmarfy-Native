@@ -1,6 +1,8 @@
-name: Desktop Linux (RPM)
+name: Desktop (RPM Fedora + Mac)
 
-# Gera o RPM do Ilmarfy para Fedora. Rode pela aba Actions ("Run workflow")
+# Gera o RPM do Ilmarfy para Fedora e o zip do Ilmarfy.app para Mac.
+# Os apps instalados se atualizam sozinhos pela Release mais nova.
+# Rode pela aba Actions ("Run workflow")
 # ou crie uma tag desktop-vX.Y.Z para publicar uma Release com o RPM.
 on:
   workflow_dispatch:
@@ -37,3 +39,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target.nosync/generate-rpm/*.rpm
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compilar e montar Ilmarfy.app
+        run: INSTALL_DIR="$PWD/dist" ./desktop/bundle-macos.sh
+      - name: Compactar
+        run: ditto -c -k --keepParent dist/Ilmarfy.app Ilmarfy-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ilmarfy-macos
+          path: Ilmarfy-macos-arm64.zip
+      - name: Publicar Release (tags desktop-v*)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Ilmarfy-macos-arm64.zip

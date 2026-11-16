@@ -2,6 +2,7 @@
 
 use crate::playback::{Item, Playback, Status};
 use crate::ui::{self, BG, BLACK, CARD, DIM, GREEN, HOVER, SUB, TEXT, TILE};
+use crate::updater;
 use eframe::egui::{self, Align, Align2, Color32, Layout, Rect, RichText, Sense, Ui, Vec2};
 use ilmarfy_core::{
     AlbumSummary, ArtistSummary, DEFAULT_SERVER, DislikeScope, FlowRestricted, FlowTrack, Ilmarfy, LyricLine, Playlist, Repeat, Track,
@@ -42,6 +43,8 @@ enum Event {
     Lyrics(String, Option<Vec<LyricLine>>, String),
     Message(String),
     Changed,
+    UpdateChecked(Result<Option<updater::Release>, String>, bool),
+    UpdateInstalled(Result<std::process::Command, String>),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -106,6 +109,10 @@ pub struct App {
     lyrics: Option<(String, Option<Vec<LyricLine>>, String)>,
     downloading: HashSet<String>,
     new_playlist: Option<String>,
+    update: Option<updater::Release>,
+    update_busy: bool,
+    update_hidden: bool,
+    update_status: String,
 }
 
 fn token_file(dir: &std::path::Path) -> PathBuf {
@@ -205,8 +212,14 @@ impl App {
             lyrics: None,
             downloading: HashSet::new(),
             new_playlist: None,
+            update: None,
+            update_busy: false,
+            update_hidden: false,
+            update_status: String::new(),
         };
         app.setup_media_controls();
+        #[cfg(not(test))]
+        app.check_update(&cc.egui_ctx, false);
         if app.core.is_some() {
             app.sync(&cc.egui_ctx);
         }
@@ -235,6 +248,89 @@ impl App {
 
     fn toast(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
         self.toast = Some((msg.into(), ctx.input(|i| i.time) + 4.0));
+    }
+
+    fn check_update(&mut self, ctx: &egui::Context, manual: bool) {
+        if self.update_busy {
+            return;
+        }
+        self.update_busy = true;
+        self.update_status = "Procurando atualizações…".into();
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Event::UpdateChecked(updater::check(), manual));
+            ctx.request_repaint();
+        });
+    }
+
+    fn install_update(&mut self, ctx: &egui::Context) {
+        let Some(rel) = self.update.clone() else { return };
+        if self.update_busy {
+            return;
+        }
+        self.update_busy = true;
+        self.update_status = format!("Baixando e instalando a versão {}…", rel.version);
+        let (tx, ctx, dir) = (self.tx.clone(), ctx.clone(), self.data_dir.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Event::UpdateInstalled(updater::install(&rel, &dir)));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Envia plays pendentes esperando no máximo 2 s (offline/rede lenta)
+    fn flush_plays_quick(&self) {
+        if let Some(c) = self.core.clone() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = c.flush_plays();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+        }
+    }
+
+    fn update_window(&mut self, ctx: &egui::Context) {
+        let Some(rel) = self.update.clone() else { return };
+        if self.update_hidden {
+            return;
+        }
+        let (mut now, mut later) = (false, false);
+        egui::Window::new("Atualização disponível")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                ui.label(RichText::new(format!("Ilmarfy {} → {}", env!("CARGO_PKG_VERSION"), rel.version)).font(ui::font_bold(16.0)));
+                if !rel.notes.is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                        ui.label(RichText::new(&rel.notes).color(SUB));
+                    });
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new(format!("{:.1} MB", rel.size as f64 / 1_048_576.0)).color(DIM));
+                ui.add_space(10.0);
+                if self.update_busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(&self.update_status);
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        now = ui::pill(ui, "Atualizar agora", GREEN, Color32::BLACK).clicked();
+                        later = ui::pill(ui, "Depois", TILE, TEXT).clicked();
+                    });
+                    if cfg!(target_os = "linux") {
+                        ui.label(RichText::new("O sistema vai pedir sua senha para instalar.").color(DIM));
+                    }
+                }
+            });
+        if now {
+            self.install_update(ctx);
+        } else if later {
+            self.update_hidden = true;
+        }
     }
 
     fn spawn(&self, ctx: &egui::Context, job: impl FnOnce(&Ilmarfy) -> Event + Send + 'static) {
@@ -399,6 +495,42 @@ impl App {
                 Event::Lyrics(id, lines, plain) => self.lyrics = Some((id, lines, plain)),
                 Event::Message(m) => self.toast(ctx, m),
                 Event::Changed => self.lib_version += 1,
+                Event::UpdateChecked(r, manual) => {
+                    self.update_busy = false;
+                    match r {
+                        Ok(Some(rel)) => {
+                            self.update_status = format!("Versão {} disponível", rel.version);
+                            self.update_hidden = false;
+                            self.update = Some(rel);
+                        }
+                        Ok(None) => {
+                            self.update_status = "Você está na versão mais recente".into();
+                            if manual {
+                                self.toast(ctx, "Você está na versão mais recente");
+                            }
+                        }
+                        Err(e) => {
+                            self.update_status = e.clone();
+                            if manual {
+                                self.toast(ctx, e);
+                            }
+                        }
+                    }
+                }
+                Event::UpdateInstalled(r) => {
+                    self.update_busy = false;
+                    match r {
+                        Ok(mut relaunch) => {
+                            self.flush_plays_quick();
+                            let _ = relaunch.spawn();
+                            std::process::exit(0);
+                        }
+                        Err(e) => {
+                            self.update_status = e.clone();
+                            self.toast(ctx, e);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1565,11 +1697,28 @@ impl App {
                     ui.end_row();
                 }
             });
+            if !self.update_status.is_empty() {
+                ui.add_space(8.0);
+                ui.label(RichText::new(&self.update_status).color(SUB));
+            }
             ui.add_space(20.0);
             ui.horizontal(|ui| {
                 if ui::pill(ui, "⟳  Sincronizar agora", TILE, TEXT).clicked() {
                     let ctx = ui.ctx().clone();
                     self.sync(&ctx);
+                }
+                let label = if self.update.is_some() {
+                    "⬇  Instalar atualização"
+                } else {
+                    "Procurar atualizações"
+                };
+                if ui::pill(ui, label, TILE, TEXT).clicked() {
+                    let ctx = ui.ctx().clone();
+                    if self.update.is_some() {
+                        self.update_hidden = false;
+                    } else {
+                        self.check_update(&ctx, true);
+                    }
                 }
                 if ui::pill(ui, "Sair deste computador", Color32::from_rgb(0xB4, 0x32, 0x32), TEXT).clicked() {
                     let _ = core.revoke_this_device();
@@ -1640,18 +1789,19 @@ impl App {
 
         // Centro: controles numa linha e a barra de progresso embaixo
         let Some(p) = &mut self.playback else { return };
-        let controls = Rect::from_center_size(egui::pos2(center.center().x, center.top() + 30.0), Vec2::new(240.0, 40.0));
-        let mut c = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(controls)
-                .layout(Layout::left_to_right(Align::Center)),
-        );
-        c.spacing_mut().item_spacing.x = 10.0;
-        c.add_space(4.0);
-        if ui::icon_button(&mut c, "🔀", 17.0, p.shuffle(), "Aleatório").clicked() {
+        // Cada botão num ponto fixo em relação ao centro, para ficar alinhado com a barra
+        let (cx, cy) = (center.center().x, center.top() + 30.0);
+        let slot = |ui: &mut Ui, dx: f32, size: f32| {
+            ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_center_size(egui::pos2(cx + dx, cy), Vec2::splat(size)))
+                    .layout(Layout::left_to_right(Align::Center)),
+            )
+        };
+        if ui::icon_button(&mut slot(ui, -96.0, 25.0), "🔀", 17.0, p.shuffle(), "Aleatório").clicked() {
             p.toggle_shuffle();
         }
-        if ui::icon_button(&mut c, "⏮", 20.0, false, "Anterior").clicked() {
+        if ui::icon_button(&mut slot(ui, -50.0, 28.0), "⏮", 20.0, false, "Anterior").clicked() {
             p.previous();
         }
         let icon = match p.status() {
@@ -1659,10 +1809,10 @@ impl App {
             Status::Loading => "…",
             _ => "▶",
         };
-        if ui::circle_button(&mut c, icon, 36.0, TEXT, Color32::BLACK).clicked() {
+        if ui::circle_button(&mut slot(ui, 0.0, 36.0), icon, 36.0, TEXT, Color32::BLACK).clicked() {
             p.toggle();
         }
-        if ui::icon_button(&mut c, "⏭", 20.0, false, "Próxima").clicked() {
+        if ui::icon_button(&mut slot(ui, 50.0, 28.0), "⏭", 20.0, false, "Próxima").clicked() {
             p.next();
         }
         let (rep_icon, rep_on) = match p.repeat() {
@@ -1670,7 +1820,7 @@ impl App {
             Repeat::All => ("🔁", true),
             Repeat::One => ("🔂", true),
         };
-        if ui::icon_button(&mut c, rep_icon, 17.0, rep_on, "Repetir").clicked() {
+        if ui::icon_button(&mut slot(ui, 96.0, 25.0), rep_icon, 17.0, rep_on, "Repetir").clicked() {
             p.cycle_repeat();
         }
 
@@ -1938,6 +2088,7 @@ impl eframe::App for App {
         if self.show_restricted {
             self.restricted_window(&ctx);
         }
+        self.update_window(&ctx);
         if let Some(name) = &mut self.new_playlist {
             let mut create = false;
             let mut cancel = false;
@@ -1983,10 +2134,10 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
-        // Envia plays pendentes ao fechar (sem travar se estiver offline)
-        if let Some(c) = &self.core {
-            let _ = c.flush_plays();
-        }
+        self.flush_plays_quick();
+        // Encerra já: no Linux, desmontar o MPRIS (D-Bus) e a saída de áudio pode travar a janela
+        #[cfg(not(test))]
+        std::process::exit(0);
     }
 }
 

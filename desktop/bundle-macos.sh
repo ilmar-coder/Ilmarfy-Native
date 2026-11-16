@@ -7,6 +7,7 @@ APP_NAME="Ilmarfy"
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 OUT="target.nosync/$APP_NAME.app"
 DEST="${INSTALL_DIR:-/Applications}"
+mkdir -p "$DEST"
 
 echo "==> Compilando (release)..."
 cargo build --release -p ilmarfy-desktop
