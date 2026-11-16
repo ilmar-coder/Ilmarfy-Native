@@ -192,6 +192,106 @@ pub struct AlbumSummary {
     pub track_count: u32,
 }
 
+/// Resultado de busca no YouTube Music (para adicionar à biblioteca)
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct YtTrack {
+    /// videoId do YouTube
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    #[serde(rename = "albumId")]
+    pub album_id: String,
+    pub duration_ms: i64,
+    pub duration_str: String,
+    pub cover: String,
+}
+
+impl YtTrack {
+    /// Como faixa do Flow, para tocar a prévia no mesmo player
+    pub fn as_flow(&self) -> FlowTrack {
+        FlowTrack {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            artist: self.artist.clone(),
+            album: self.album.clone(),
+            cover: self.cover.clone(),
+            duration_ms: self.duration_ms,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct YtAlbum {
+    pub title: String,
+    pub artist: String,
+    pub cover: String,
+    #[serde(deserialize_with = "null_as_empty")]
+    pub tracks: Vec<YtTrack>,
+}
+
+/// Item da fila de downloads do servidor
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DownloadTask {
+    pub id: String,
+    pub query: String,
+    pub title: String,
+    pub artist: String,
+    /// queued, downloading, paused, completed, error, cancelled…
+    pub status: String,
+    pub progress: f64,
+    pub speed: String,
+    pub eta: String,
+    pub error: String,
+}
+
+impl DownloadTask {
+    pub fn is_active(&self) -> bool {
+        !matches!(
+            self.status.as_str(),
+            "completed" | "done" | "error" | "failed" | "cancelled" | "canceled"
+        )
+    }
+}
+
+/// Campos editáveis de uma faixa
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TrackEdit {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub year: String,
+    #[serde(rename = "coverUrl")]
+    pub cover_url: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DuplicateCluster {
+    pub key: String,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Duplicates {
+    pub total_clusters: u32,
+    /// O servidor manda `null` quando não há nenhuma
+    #[serde(deserialize_with = "null_as_empty")]
+    pub duplicates: Vec<DuplicateCluster>,
+}
+
+fn null_as_empty<'de, D, T>(d: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

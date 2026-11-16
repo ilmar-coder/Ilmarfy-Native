@@ -1,2 +1,3 @@
-- Restritas: lista própria para ouvir as músicas restritas, e botão 🚫 no player e no menu das músicas para restringir ou devolver à biblioteca.
-- Ranking "Mais tocadas": top 100 com a contagem de reproduções, na biblioteca e nos atalhos do início.
+- Adicionar músicas: busca no YouTube Music com prévia, álbum inteiro, links de playlist ou de vídeo, e fila de downloads do servidor (pausar, continuar, cancelar).
+- Menu das músicas: editar informações, corrigir capa e álbum automaticamente e apagar do servidor.
+- Configurações: procurar e limpar duplicadas, e salvar backup da biblioteca em Downloads.

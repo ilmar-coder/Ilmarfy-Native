@@ -304,6 +304,93 @@ impl Api {
         )
     }
 
+    // ------------------------------------------------------------ Adicionar e administrar músicas
+
+    pub fn yt_search(&self, query: &str) -> Result<Vec<YtTrack>> {
+        Ok(self
+            .send::<Option<Vec<YtTrack>>>("POST", "/api/ytmusic/search", Some(json!({ "query": query })))?
+            .unwrap_or_default())
+    }
+
+    pub fn yt_album(&self, album_id: &str) -> Result<YtAlbum> {
+        self.get(&format!("/api/ytmusic/album-tracks?id={}", encode_path_segment(album_id)))
+    }
+
+    /// Faixas de uma playlist do YouTube / YouTube Music (link ou id)
+    pub fn yt_playlist(&self, url: &str) -> Result<Vec<YtTrack>> {
+        Ok(self
+            .send::<Option<Vec<YtTrack>>>("POST", "/api/ytmusic/playlist-preview", Some(json!({ "playlist_url": url })))?
+            .unwrap_or_default())
+    }
+
+    /// Põe na fila de downloads do servidor. `query` pode ser um link do YouTube.
+    pub fn start_download(&self, query: &str, title: &str, artist: &str, duration_ms: i64) -> Result<()> {
+        self.send::<serde_json::Value>(
+            "POST",
+            "/api/spotify/download/start",
+            Some(json!({ "query": query, "title": title, "artist": artist, "duration_ms": duration_ms })),
+        )?;
+        Ok(())
+    }
+
+    pub fn add_yt_track(&self, t: &YtTrack) -> Result<()> {
+        self.start_download(
+            &format!("https://www.youtube.com/watch?v={}", t.id),
+            &t.title,
+            &t.artist,
+            t.duration_ms,
+        )
+    }
+
+    pub fn downloads(&self) -> Result<Vec<DownloadTask>> {
+        Ok(self.get::<Option<Vec<DownloadTask>>>("/api/spotify/downloads")?.unwrap_or_default())
+    }
+
+    /// action: cancel, pause ou resume
+    pub fn download_action(&self, id: &str, action: &str) -> Result<()> {
+        self.send::<serde_json::Value>(
+            "POST",
+            &format!("/api/spotify/downloads/{}/{action}", encode_path_segment(id)),
+            None,
+        )?;
+        Ok(())
+    }
+
+    pub fn update_track(&self, id: &str, edit: &TrackEdit, filename: &str) -> Result<Track> {
+        let mut body = serde_json::to_value(edit).map_err(|e| Error::Decode(e.to_string()))?;
+        body["filename"] = json!(filename);
+        self.send("PUT", &format!("/api/spotify/tracks/{}", encode_path_segment(id)), Some(body))
+    }
+
+    /// Busca título, álbum e capa automaticamente (iTunes) e grava no servidor
+    pub fn fix_metadata(&self, id: &str) -> Result<Track> {
+        self.send(
+            "POST",
+            &format!("/api/spotify/tracks/{}/fix-metadata", encode_path_segment(id)),
+            None,
+        )
+    }
+
+    /// Apaga a faixa e o arquivo do servidor (não tem volta)
+    pub fn delete_track(&self, id: &str) -> Result<()> {
+        self.send::<serde_json::Value>("DELETE", &format!("/api/spotify/tracks/{}", encode_path_segment(id)), None)?;
+        Ok(())
+    }
+
+    pub fn duplicates(&self) -> Result<Duplicates> {
+        self.get("/api/spotify/duplicates")
+    }
+
+    /// Apaga as cópias, mantendo a mais tocada de cada grupo. Devolve a resposta do servidor.
+    pub fn cleanup_duplicates(&self) -> Result<serde_json::Value> {
+        self.send("POST", "/api/spotify/duplicates/cleanup", None)
+    }
+
+    /// Backup da biblioteca (metadados e playlists) em JSON
+    pub fn backup(&self) -> Result<serde_json::Value> {
+        self.get("/api/spotify/backup")
+    }
+
     // ------------------------------------------------------------ Arquivos
 
     /// Baixa o arquivo da faixa para `dest` (grava em `.part` e renomeia no fim).

@@ -15,6 +15,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
+#[path = "admin.rs"]
+mod admin;
+
 const ROW_H: f32 = 56.0;
 
 #[derive(Clone, PartialEq)]
@@ -29,6 +32,7 @@ enum View {
     Offline,
     Restricted,
     Ranking,
+    Add,
     Flow,
     Settings,
 }
@@ -47,6 +51,7 @@ enum Event {
     Changed,
     UpdateChecked(Result<Option<updater::Release>, String>, bool),
     UpdateInstalled(Result<std::process::Command, String>),
+    Admin(admin::AdminEvent),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -66,6 +71,9 @@ enum TrackAction {
     RemoveDownload,
     GoArtist,
     Restrict(bool),
+    Edit,
+    Fix,
+    Delete,
 }
 
 pub struct App {
@@ -114,6 +122,7 @@ pub struct App {
     new_playlist: Option<String>,
     update: Option<updater::Release>,
     restricted_count: usize,
+    admin: admin::AdminState,
     update_busy: bool,
     update_hidden: bool,
     update_status: String,
@@ -218,6 +227,7 @@ impl App {
             new_playlist: None,
             update: None,
             restricted_count: 0,
+            admin: Default::default(),
             update_busy: false,
             update_hidden: false,
             update_status: String::new(),
@@ -531,6 +541,7 @@ impl App {
                         }
                     }
                 }
+                Event::Admin(a) => self.admin_event(ctx, a),
                 Event::UpdateInstalled(r) => {
                     self.update_busy = false;
                     match r {
@@ -758,6 +769,13 @@ impl App {
                 ui.add_space(8.0);
                 self.nav_item(ui, "🏠", "Início", View::Home);
                 self.nav_item(ui, "🔍", "Buscar", View::Search);
+                let n = self.active_downloads();
+                let label = if n > 0 {
+                    format!("Adicionar músicas ({n} ⬇)")
+                } else {
+                    "Adicionar músicas".to_string()
+                };
+                self.nav_item(ui, "➕", &label, View::Add);
             });
         ui.add_space(8.0);
         // Bloco de baixo: sua biblioteca
@@ -1084,6 +1102,16 @@ impl App {
                         if ui.button(label).clicked() {
                             action = Some((i, TrackAction::Restrict(on)));
                         }
+                        ui.separator();
+                        if ui.button("✏  Editar informações").clicked() {
+                            action = Some((i, TrackAction::Edit));
+                        }
+                        if ui.button("✨  Corrigir capa e álbum").clicked() {
+                            action = Some((i, TrackAction::Fix));
+                        }
+                        if ui.button("🗑  Apagar do servidor").clicked() {
+                            action = Some((i, TrackAction::Delete));
+                        }
                     });
                 }
                 ui.add_space(24.0);
@@ -1136,6 +1164,9 @@ impl App {
             }
             TrackAction::GoArtist => self.go(View::Artist(t.artist)),
             TrackAction::Restrict(on) => self.restrict(ctx, t, on),
+            TrackAction::Edit => self.start_edit(t),
+            TrackAction::Fix => self.fix_metadata(ctx, t),
+            TrackAction::Delete => self.ask_delete(t),
         }
     }
 
@@ -1842,6 +1873,7 @@ impl App {
                     self.logout_local();
                 }
             });
+            self.maintenance_section(ui);
         });
     }
 
@@ -2225,6 +2257,7 @@ impl eframe::App for App {
                         View::Artists => self.artists_page(ui),
                         View::Flow => self.flow_page(ui),
                         View::Settings => self.settings_page(ui),
+                        View::Add => self.add_page(ui),
                         _ => self.list_page(ui),
                     }
                 });
@@ -2233,6 +2266,8 @@ impl eframe::App for App {
             self.restricted_window(&ctx);
         }
         self.update_window(&ctx);
+        self.admin_windows(&ctx);
+        self.poll_downloads(&ctx);
         if let Some(name) = &mut self.new_playlist {
             let mut create = false;
             let mut cancel = false;
@@ -2379,6 +2414,13 @@ mod tests {
         h.state_mut().go(View::Ranking);
         h.run_steps(5);
         snap(&mut h, "d8-ranking");
+        // Adicionar músicas: só busca (não manda nada para a fila)
+        h.state_mut().go(View::Add);
+        h.state_mut().admin.query = "Cachorro Grande Lunático".into();
+        let ctx = h.ctx.clone();
+        h.state_mut().run_search(&ctx);
+        wait(&mut h, 60, |a| !a.admin.loading);
+        snap(&mut h, "d9-adicionar");
         if let Some(p) = &mut h.state_mut().playback {
             p.stop();
         }
