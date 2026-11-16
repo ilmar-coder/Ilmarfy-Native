@@ -271,6 +271,21 @@ impl Ilmarfy {
         Ok(())
     }
 
+    /// Marca ou desmarca a faixa como restrita (some da biblioteca e vai para "Restritas").
+    pub fn set_restricted(&self, track_id: &str, restricted: bool) -> Result<()> {
+        if let Some(t) = self.library.track(track_id)?
+            && t.restricted == restricted
+        {
+            return Ok(());
+        }
+        let mut t = self.api.toggle_restricted(track_id)?;
+        if t.restricted != restricted {
+            // a cópia local estava desatualizada: o servidor inverteu para o lado errado
+            t = self.api.toggle_restricted(track_id)?;
+        }
+        self.library.set_restricted(track_id, t.restricted)
+    }
+
     pub fn is_favorite(&self, track_id: &str) -> Result<bool> {
         Ok(self
             .library

@@ -27,6 +27,8 @@ enum View {
     Playlist(String),
     Favorites,
     Offline,
+    Restricted,
+    Ranking,
     Flow,
     Settings,
 }
@@ -63,6 +65,7 @@ enum TrackAction {
     Download,
     RemoveDownload,
     GoArtist,
+    Restrict(bool),
 }
 
 pub struct App {
@@ -110,6 +113,7 @@ pub struct App {
     downloading: HashSet<String>,
     new_playlist: Option<String>,
     update: Option<updater::Release>,
+    restricted_count: usize,
     update_busy: bool,
     update_hidden: bool,
     update_status: String,
@@ -213,6 +217,7 @@ impl App {
             downloading: HashSet::new(),
             new_playlist: None,
             update: None,
+            restricted_count: 0,
             update_busy: false,
             update_hidden: false,
             update_status: String::new(),
@@ -376,6 +381,7 @@ impl App {
         let Some(core) = &self.core else { return };
         let lib = core.library();
         self.tracks_cache = lib.tracks(TrackOrder::Title, false).unwrap_or_default();
+        self.restricted_count = lib.restricted_tracks().map(|t| t.len()).unwrap_or(0);
         self.covers = lib
             .tracks(TrackOrder::Title, true)
             .unwrap_or_default()
@@ -446,6 +452,14 @@ impl App {
                 .as_ref()
                 .map(|id| lib.playlist_tracks(id).unwrap_or_default())
                 .unwrap_or_default(),
+            View::Restricted => lib.restricted_tracks().unwrap_or_default(),
+            View::Ranking => lib
+                .tracks(TrackOrder::MostPlayed, false)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| t.play_count > 0)
+                .take(100)
+                .collect(),
             View::Offline => self
                 .tracks_cache
                 .iter()
@@ -791,6 +805,25 @@ impl App {
                     self.library_item(ui, "Offline", &format!("{off} músicas no computador"), View::Offline, |ui, r| {
                         paint_special(ui, r, Color32::from_rgb(0x0E, 0x7C, 0x4F), Color32::from_rgb(0x06, 0x2E, 0x1E), "⬇");
                     });
+                    self.library_item(ui, "Mais tocadas", "Ranking • top 100", View::Ranking, |ui, r| {
+                        paint_special(
+                            ui,
+                            r,
+                            Color32::from_rgb(0xE9, 0x5F, 0x2A),
+                            Color32::from_rgb(0x5A, 0x14, 0x3C),
+                            "🏆",
+                        );
+                    });
+                    let n = self.restricted_count;
+                    self.library_item(ui, "Restritas", &format!("{n} músicas guardadas"), View::Restricted, |ui, r| {
+                        paint_special(
+                            ui,
+                            r,
+                            Color32::from_rgb(0x8A, 0x1C, 0x2B),
+                            Color32::from_rgb(0x2A, 0x0A, 0x10),
+                            "🚫",
+                        );
+                    });
                     let lists = self.playlists.clone();
                     for p in lists {
                         let covers = self.playlist_covers(&p);
@@ -895,6 +928,7 @@ impl App {
         let width = ui.available_width() - 24.0;
         let album_w = (width * 0.30).clamp(120.0, 360.0);
         let title_w = width - 48.0 - album_w - 110.0;
+        let ranking = self.view == View::Ranking;
         // cabeçalho (mesmas colunas das linhas)
         let (head, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::hover());
         let row = head.shrink2(Vec2::new(12.0, 0.0));
@@ -905,7 +939,7 @@ impl App {
         paint_truncated(
             ui,
             egui::pos2(row.left() + 52.0 + title_w, cy),
-            "Álbum",
+            if ranking { "Reproduções" } else { "Álbum" },
             ui::font(13.0),
             SUB,
             album_w,
@@ -949,7 +983,12 @@ impl App {
                             GREEN,
                         );
                     } else {
-                        p.text(idx_center, Align2::CENTER_CENTER, (i + 1).to_string(), ui::font(14.0), SUB);
+                        let (f, c) = if ranking && i < 3 {
+                            (ui::font_bold(17.0), GREEN)
+                        } else {
+                            (ui::font(14.0), SUB)
+                        };
+                        p.text(idx_center, Align2::CENTER_CENTER, (i + 1).to_string(), f, c);
                     }
                     // capa + título/artista
                     let cover = Rect::from_min_size(egui::pos2(row.left() + 52.0, cy - 20.0), Vec2::splat(40.0));
@@ -966,7 +1005,18 @@ impl App {
                     paint_truncated(ui, egui::pos2(tx, cy + 10.0), &artist, ui::font(13.0), SUB, tw);
                     // álbum
                     let ax = row.left() + 52.0 + title_w;
-                    paint_truncated(ui, egui::pos2(ax, cy), &t.album, ui::font(13.0), SUB, album_w - 16.0);
+                    if ranking {
+                        paint_truncated(
+                            ui,
+                            egui::pos2(ax, cy),
+                            &format!("{} ▶", fmt_thousands(t.play_count)),
+                            ui::font_bold(14.0),
+                            if i < 3 { GREEN } else { TEXT },
+                            album_w - 16.0,
+                        );
+                    } else {
+                        paint_truncated(ui, egui::pos2(ax, cy), &t.album, ui::font(13.0), SUB, album_w - 16.0);
+                    }
                     // favorito e duração
                     let p = ui.painter();
                     if self.favorites.contains(&t.id) {
@@ -1025,6 +1075,15 @@ impl App {
                         if ui.button("👤  Ir para o artista").clicked() {
                             action = Some((i, TrackAction::GoArtist));
                         }
+                        ui.separator();
+                        let (label, on) = if t.restricted {
+                            ("↺  Tirar das restritas", false)
+                        } else {
+                            ("🚫  Restringir", true)
+                        };
+                        if ui.button(label).clicked() {
+                            action = Some((i, TrackAction::Restrict(on)));
+                        }
                     });
                 }
                 ui.add_space(24.0);
@@ -1076,7 +1135,19 @@ impl App {
                 self.lib_version += 1;
             }
             TrackAction::GoArtist => self.go(View::Artist(t.artist)),
+            TrackAction::Restrict(on) => self.restrict(ctx, t, on),
         }
+    }
+
+    fn restrict(&mut self, ctx: &egui::Context, t: Track, on: bool) {
+        self.spawn(ctx, move |c| match c.set_restricted(&t.id, on) {
+            Ok(()) => Event::Message(if on {
+                format!("🚫 \"{}\" foi para Restritas", t.title)
+            } else {
+                format!("\"{}\" voltou para a biblioteca", t.title)
+            }),
+            Err(e) => Event::Message(e.to_string()),
+        });
     }
 
     fn home(&mut self, ui: &mut Ui) {
@@ -1133,6 +1204,13 @@ impl App {
                 Color32::from_rgb(0x0B, 0x4D, 0x7A),
                 "🌊",
                 View::Flow,
+            ),
+            Tile::Special(
+                "Mais tocadas",
+                Color32::from_rgb(0xE9, 0x5F, 0x2A),
+                Color32::from_rgb(0x5A, 0x14, 0x3C),
+                "🏆",
+                View::Ranking,
             ),
         ];
         tiles.extend(self.playlists.iter().cloned().map(Tile::Playlist));
@@ -1303,6 +1381,45 @@ impl App {
                             Color32::from_rgb(0x45, 0x0A, 0xF5),
                             Color32::from_rgb(0xC4, 0xEF, 0xD9),
                             "♥",
+                        );
+                    },
+                );
+                self.action_row(ui, &tracks, |_, _| {});
+            }
+            View::Ranking => {
+                let plays: i64 = tracks.iter().map(|t| t.play_count).sum();
+                self.page_header(
+                    ui,
+                    "Ranking",
+                    "Mais tocadas",
+                    &format!("{} músicas • {} reproduções", tracks.len(), fmt_thousands(plays)),
+                    Color32::from_rgb(0xE9, 0x5F, 0x2A),
+                    |ui| {
+                        ui::special_cover(
+                            ui,
+                            200.0,
+                            Color32::from_rgb(0xE9, 0x5F, 0x2A),
+                            Color32::from_rgb(0x5A, 0x14, 0x3C),
+                            "🏆",
+                        );
+                    },
+                );
+                self.action_row(ui, &tracks, |_, _| {});
+            }
+            View::Restricted => {
+                self.page_header(
+                    ui,
+                    "Fora da biblioteca",
+                    "Restritas",
+                    &summary,
+                    Color32::from_rgb(0x8A, 0x1C, 0x2B),
+                    |ui| {
+                        ui::special_cover(
+                            ui,
+                            200.0,
+                            Color32::from_rgb(0x8A, 0x1C, 0x2B),
+                            Color32::from_rgb(0x2A, 0x0A, 0x10),
+                            "🚫",
                         );
                     },
                 );
@@ -1746,7 +1863,7 @@ impl App {
             let cy = left.center().y;
             let cover = Rect::from_min_size(egui::pos2(left.left() + 8.0, cy - 28.0), Vec2::splat(56.0));
             ui::cover_at(ui, cover, item.cover(), &format!("{}{}", item.artist(), item.album()), 4.0);
-            let tw = left.width() - 56.0 - 70.0;
+            let tw = left.width() - 56.0 - 100.0;
             paint_truncated(
                 ui,
                 egui::pos2(cover.right() + 14.0, cy - 10.0),
@@ -1778,6 +1895,33 @@ impl App {
                         SUB
                     },
                 );
+                // Restringir a música que está tocando (ou devolvê-la à biblioteca)
+                let restricted = self
+                    .core
+                    .as_ref()
+                    .and_then(|c| c.library().track(&id).ok().flatten())
+                    .is_some_and(|t| t.restricted);
+                let ban = Rect::from_center_size(egui::pos2(left.right() - 60.0, cy), Vec2::splat(28.0));
+                let ban_resp = ui.interact(ban, ui.scope_id().with("ban"), Sense::click());
+                ui.painter().text(
+                    ban.center(),
+                    Align2::CENTER_CENTER,
+                    "🚫",
+                    ui::font(16.0),
+                    if restricted {
+                        Color32::from_rgb(0xFF, 0x52, 0x52)
+                    } else if ban_resp.hovered() {
+                        TEXT
+                    } else {
+                        DIM
+                    },
+                );
+                let ban_tip = if restricted { "Tirar das restritas" } else { "Restringir" };
+                if ban_resp.on_hover_text(ban_tip).clicked()
+                    && let Item::Track(t) = item
+                {
+                    self.restrict(ui.ctx(), t.clone(), !restricted);
+                }
                 if resp.on_hover_text(if fav { "Remover das curtidas" } else { "Curtir" }).clicked() {
                     self.spawn(ui.ctx(), move |c| match c.toggle_favorite(&id) {
                         Ok(_) => Event::Changed,
@@ -2141,6 +2285,19 @@ impl eframe::App for App {
     }
 }
 
+/// 12345 -> "12.345"
+fn fmt_thousands(n: i64) -> String {
+    let digits = n.abs().to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('.');
+        }
+        out.push(ch);
+    }
+    if n < 0 { format!("-{out}") } else { out }
+}
+
 #[cfg(test)]
 mod tests {
     //! Janela renderizada fora da tela com dados reais (só leitura; volume zerado):
@@ -2216,6 +2373,12 @@ mod tests {
         h.state_mut().go(View::Flow);
         wait(&mut h, 40, |a| a.flow.is_some());
         snap(&mut h, "d6-flow");
+        h.state_mut().go(View::Restricted);
+        h.run_steps(5);
+        snap(&mut h, "d7-restritas");
+        h.state_mut().go(View::Ranking);
+        h.run_steps(5);
+        snap(&mut h, "d8-ranking");
         if let Some(p) = &mut h.state_mut().playback {
             p.stop();
         }

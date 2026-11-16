@@ -25,6 +25,8 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -49,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -126,6 +129,10 @@ fun SpecialCover(icon: androidx.compose.ui.graphics.vector.ImageVector, top: Col
 
 val LikedTop = Color(0xFF450AF5)
 val LikedBottom = Color(0xFFC4EFD9)
+val RankingTop = Color(0xFFE95F2A)
+val RankingBottom = Color(0xFF5A143C)
+val RestrictedTop = Color(0xFF8A1C2B)
+val RestrictedBottom = Color(0xFF2A0A10)
 
 fun formatDuration(secs: Long): String = "%d:%02d".format(secs / 60, secs % 60)
 
@@ -138,6 +145,7 @@ fun TrackRow(
     onClick: () -> Unit,
     onMessage: (String) -> Unit,
     extraMenu: (@Composable (close: () -> Unit) -> Unit)? = null,
+    rank: Int? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
     var pickPlaylist by remember { mutableStateOf(false) }
@@ -149,6 +157,17 @@ fun TrackRow(
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (rank != null) {
+            Text(
+                rank.toString(),
+                modifier = Modifier.width(32.dp),
+                color = if (rank <= 3) IlmarfyGreen else Subtext,
+                fontWeight = if (rank <= 3) FontWeight.Black else FontWeight.Normal,
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.width(4.dp))
+        }
         Cover(track.coverUrl, 48.dp, seed = track.artist + track.album)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -165,7 +184,7 @@ fun TrackRow(
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(
-                    "${track.artist} • ${formatDuration(track.durationSecs)}",
+                    if (rank != null) "${track.artist} • ${formatPlays(track.playCount)}" else "${track.artist} • ${formatDuration(track.durationSecs)}",
                     color = Subtext,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
@@ -216,6 +235,14 @@ fun TrackRow(
                         onClick = { menu = false; Downloads.downloadTrack(track.id, track.title) },
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text(if (track.restricted) "Tirar das restritas" else "Restringir") },
+                    leadingIcon = { Icon(if (track.restricted) Icons.Rounded.Restore else Icons.Rounded.Block, null) },
+                    onClick = {
+                        menu = false
+                        scope.launch { setRestricted(track, !track.restricted, onMessage) }
+                    },
+                )
                 extraMenu?.invoke { menu = false }
             }
         }
@@ -266,6 +293,7 @@ fun TrackList(
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
+    ranking: Boolean = false,
 ) {
     val now by PlayerConnection.state.collectAsState()
     val version by Core.version.collectAsState()
@@ -281,6 +309,7 @@ fun TrackList(
                 playing = now.trackId == t.id,
                 onClick = { PlayerConnection.play(tracks, i) },
                 onMessage = onMessage,
+                rank = if (ranking) i + 1 else null,
             )
         }
         item { Spacer(Modifier.size(16.dp)) }
@@ -290,3 +319,19 @@ fun TrackList(
 @Composable
 fun FavoriteIcon(on: Boolean) =
     Icon(if (on) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorita", tint = if (on) IlmarfyGreen else Subtext)
+
+/** Manda a faixa para "Restritas" (some da biblioteca) ou a devolve. Devolve o novo estado, ou null se falhou. */
+suspend fun setRestricted(track: Track, on: Boolean, onMessage: (String) -> Unit): Boolean? = setRestricted(track.id, track.title, on, onMessage)
+
+suspend fun setRestricted(id: String, title: String, on: Boolean, onMessage: (String) -> Unit): Boolean? =
+    runCatching { Core.io { it.setRestricted(id, on) } }
+        .onSuccess {
+            onMessage(if (on) "\"$title\" foi para Restritas" else "\"$title\" voltou para a biblioteca")
+            Core.changed()
+        }
+        .onFailure { onMessage(it.friendly()) }
+        .map { on }
+        .getOrNull()
+
+/** 1234 -> "1.234 reproduções" */
+fun formatPlays(n: Long): String = "%,d".format(java.util.Locale.forLanguageTag("pt-BR"), n) + if (n == 1L) " reprodução" else " reproduções"

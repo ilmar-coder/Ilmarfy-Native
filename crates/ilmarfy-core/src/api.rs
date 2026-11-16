@@ -202,6 +202,15 @@ impl Api {
         self.get_with_etag("/api/spotify/playlists", etag)
     }
 
+    /// Alterna a faixa entre restrita e normal no servidor (o servidor só sabe inverter)
+    pub fn toggle_restricted(&self, track_id: &str) -> Result<Track> {
+        self.send(
+            "PUT",
+            &format!("/api/spotify/tracks/{}/restrict", encode_path_segment(track_id)),
+            None,
+        )
+    }
+
     pub fn create_playlist(&self, name: &str) -> Result<Playlist> {
         self.send("POST", "/api/spotify/playlists", Some(json!({ "name": name })))
     }

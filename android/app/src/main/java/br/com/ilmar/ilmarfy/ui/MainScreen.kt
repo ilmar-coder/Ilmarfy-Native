@@ -147,6 +147,8 @@ fun MainScreen() {
             composable("playlist/{id}") { e -> PlaylistScreen(nav, e.arguments?.getString("id").orEmpty(), message) }
             composable("favorites") { FavoritesScreen(nav, message) }
             composable("downloaded") { DownloadedScreen(nav, message) }
+            composable("restricted") { RestrictedScreen(nav, message) }
+            composable("ranking") { RankingScreen(nav, message) }
         }
     }
 }

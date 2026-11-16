@@ -1,0 +1,2 @@
+- Restritas: lista própria para ouvir as músicas restritas, e botão 🚫 no player e no menu das músicas para restringir ou devolver à biblioteca.
+- Ranking "Mais tocadas": top 100 com a contagem de reproduções, na biblioteca e nos atalhos do início.

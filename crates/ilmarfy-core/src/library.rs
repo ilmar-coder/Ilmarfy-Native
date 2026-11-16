@@ -203,6 +203,16 @@ impl Library {
         self.query_tracks(&format!("SELECT {TRACK_COLS} FROM tracks {filter} ORDER BY {order_by}"), [])
     }
 
+    pub fn set_restricted(&self, track_id: &str, restricted: bool) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE tracks SET restricted = ?2 WHERE id = ?1",
+                params![track_id, restricted as i64],
+            )
+            .map(|_| ())
+        })
+    }
+
     pub fn restricted_tracks(&self) -> Result<Vec<Track>> {
         self.query_tracks(
             &format!("SELECT {TRACK_COLS} FROM tracks WHERE restricted = 1 ORDER BY title COLLATE NOCASE"),

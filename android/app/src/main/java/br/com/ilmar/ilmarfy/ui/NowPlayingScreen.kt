@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
+import androidx.compose.ui.graphics.Color
 import br.com.ilmar.ilmarfy.core.Core
 import br.com.ilmar.ilmarfy.core.friendly
 import br.com.ilmar.ilmarfy.playback.PlayerConnection
@@ -66,6 +68,7 @@ fun NowPlayingScreen(onClose: () -> Unit, onMessage: (String) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     var panel by remember { mutableStateOf(Panel.Cover) }
     var favorite by remember { mutableStateOf(false) }
+    var restricted by remember { mutableStateOf(false) }
     var lyrics by remember { mutableStateOf<Lyrics?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -78,6 +81,7 @@ fun NowPlayingScreen(onClose: () -> Unit, onMessage: (String) -> Unit) {
     LaunchedEffect(now.trackId) {
         val id = now.trackId
         favorite = id != null && runCatching { Core.io { it.isFavorite(id) } }.getOrDefault(false)
+        restricted = id != null && runCatching { Core.io { it.track(id)?.restricted } }.getOrNull() == true
         lyrics = null
         if (id != null) lyrics = runCatching { Core.io { it.lyrics(id) } }.getOrNull()
     }
@@ -118,6 +122,11 @@ fun NowPlayingScreen(onClose: () -> Unit, onMessage: (String) -> Unit) {
                 Text(now.artist, color = Subtext, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             now.trackId?.let { id ->
+                IconButton(onClick = {
+                    scope.launch { setRestricted(id, now.title, !restricted, onMessage)?.let { restricted = it } }
+                }) {
+                    Icon(Icons.Rounded.Block, if (restricted) "Tirar das restritas" else "Restringir", tint = if (restricted) Color(0xFFFF5252) else Subtext)
+                }
                 IconButton(onClick = {
                     scope.launch {
                         runCatching { Core.io { it.toggleFavorite(id) } }

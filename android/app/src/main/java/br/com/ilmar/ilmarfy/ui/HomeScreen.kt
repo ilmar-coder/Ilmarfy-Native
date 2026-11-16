@@ -128,7 +128,7 @@ fun HomeScreen(nav: NavHostController, onMessage: (String) -> Unit) {
                 }
             }
         }
-        item { SectionTitle("Mais tocadas") }
+        item { SectionTitle("Mais tocadas", action = "Ver ranking") { nav.navigate("ranking") } }
         item { TrackCarousel(d.top) }
         item { SectionTitle("Adicionadas recentemente") }
         item { TrackCarousel(d.recent) }
@@ -136,8 +136,15 @@ fun HomeScreen(nav: NavHostController, onMessage: (String) -> Unit) {
 }
 
 @Composable
-fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
+fun SectionTitle(text: String, action: String? = null, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Text(text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        if (action != null) Text(action, color = Subtext, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+    }
 }
 
 @Composable

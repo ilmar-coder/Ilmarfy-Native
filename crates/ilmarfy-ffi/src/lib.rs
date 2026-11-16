@@ -359,6 +359,10 @@ impl IlmarfyCore {
         Ok(tracks(self.inner.read().unwrap().library().restricted_tracks()?))
     }
 
+    pub fn set_restricted(&self, track_id: String, restricted: bool) -> Result<()> {
+        Ok(self.inner.read().unwrap().set_restricted(&track_id, restricted)?)
+    }
+
     pub fn search(&self, query: String, limit: u32) -> Result<Vec<Track>> {
         Ok(tracks(self.inner.read().unwrap().library().search(&query, limit)?))
     }

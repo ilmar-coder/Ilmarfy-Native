@@ -39,6 +39,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target.nosync/generate-rpm/*.rpm
+          body_path: desktop/NOTAS.md
 
   mac:
     runs-on: macos-latest
@@ -58,3 +59,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: Ilmarfy-macos-arm64.zip
+          body_path: desktop/NOTAS.md

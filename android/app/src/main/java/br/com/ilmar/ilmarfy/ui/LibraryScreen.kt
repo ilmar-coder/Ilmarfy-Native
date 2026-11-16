@@ -16,6 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Favorite
@@ -57,6 +59,7 @@ import uniffi.ilmarfy_ffi.Album
 import uniffi.ilmarfy_ffi.Artist
 import uniffi.ilmarfy_ffi.Playlist
 import uniffi.ilmarfy_ffi.Track
+import uniffi.ilmarfy_ffi.TrackOrder
 
 @Composable
 fun LibraryScreen(nav: NavHostController, onMessage: (String) -> Unit) {
@@ -81,6 +84,7 @@ private fun PlaylistsTab(nav: NavHostController, onMessage: (String) -> Unit) {
     val version by Core.version.collectAsState()
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var covers by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    var restrictedCount by remember { mutableStateOf(0) }
     var creating by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(version) {
@@ -88,6 +92,7 @@ private fun PlaylistsTab(nav: NavHostController, onMessage: (String) -> Unit) {
             Core.io { c ->
                 val lists = c.playlists()
                 covers = lists.associate { p -> p.id to c.playlistTracks(p.id).map { it.coverUrl }.take(12) }
+                restrictedCount = c.restrictedTracks().size
                 lists
             }
         }.onSuccess { playlists = it }
@@ -95,6 +100,20 @@ private fun PlaylistsTab(nav: NavHostController, onMessage: (String) -> Unit) {
     LazyColumn(Modifier.fillMaxSize()) {
         item {
             ListRow(title = "Nova playlist", subtitle = null, icon = { Icon(Icons.Rounded.Add, null, tint = IlmarfyGreen) }) { creating = true }
+        }
+        item {
+            ListRow(
+                title = "Mais tocadas",
+                subtitle = "Ranking • top 100",
+                icon = { SpecialCover(Icons.Rounded.EmojiEvents, RankingTop, RankingBottom, 48.dp, corner = 4.dp) },
+            ) { nav.navigate("ranking") }
+        }
+        item {
+            ListRow(
+                title = "Restritas",
+                subtitle = "$restrictedCount músicas guardadas",
+                icon = { SpecialCover(Icons.Rounded.Block, RestrictedTop, RestrictedBottom, 48.dp, corner = 4.dp) },
+            ) { nav.navigate("restricted") }
         }
         items(playlists, key = { it.id }) { p ->
             val fav = p.name.equals("Favoritos 2026", ignoreCase = true)
@@ -295,6 +314,34 @@ fun FavoritesScreen(nav: NavHostController, onMessage: (String) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         DetailHeader(nav, "Músicas curtidas", "${tracks.size} faixas", tracks, cover = {
             SpecialCover(Icons.Rounded.Favorite, LikedTop, LikedBottom, 200.dp, corner = 8.dp)
+        })
+        TrackList(tracks, onMessage)
+    }
+}
+
+@Composable
+fun RankingScreen(nav: NavHostController, onMessage: (String) -> Unit) {
+    val version by Core.version.collectAsState()
+    var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    LaunchedEffect(version) {
+        tracks = runCatching { Core.io { c -> c.tracks(TrackOrder.MOST_PLAYED).filter { it.playCount > 0 }.take(100) } }.getOrDefault(emptyList())
+    }
+    Column(Modifier.fillMaxSize()) {
+        DetailHeader(nav, "Mais tocadas", "Top ${tracks.size} • ${formatPlays(tracks.sumOf { it.playCount })}", tracks, cover = {
+            SpecialCover(Icons.Rounded.EmojiEvents, RankingTop, RankingBottom, 200.dp, corner = 8.dp)
+        })
+        TrackList(tracks, onMessage, ranking = true)
+    }
+}
+
+@Composable
+fun RestrictedScreen(nav: NavHostController, onMessage: (String) -> Unit) {
+    val version by Core.version.collectAsState()
+    var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    LaunchedEffect(version) { tracks = runCatching { Core.io { it.restrictedTracks() } }.getOrDefault(emptyList()) }
+    Column(Modifier.fillMaxSize()) {
+        DetailHeader(nav, "Restritas", "${tracks.size} faixas fora da biblioteca", tracks, cover = {
+            SpecialCover(Icons.Rounded.Block, RestrictedTop, RestrictedBottom, 200.dp, corner = 8.dp)
         })
         TrackList(tracks, onMessage)
     }
