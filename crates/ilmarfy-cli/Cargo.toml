@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 dirs = "7.0.0"
-ilmarfy-core = { version = "0.1.0", path = "../ilmarfy-core" }
+ilmarfy-core = { path = "../ilmarfy-core" }
 rpassword = "7.5.5"
 serde_json = "1.0.154"
 

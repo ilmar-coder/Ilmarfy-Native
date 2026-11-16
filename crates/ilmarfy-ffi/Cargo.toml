@@ -13,6 +13,6 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
-ilmarfy-core = { version = "0.1.0", path = "../ilmarfy-core" }
+ilmarfy-core = { path = "../ilmarfy-core" }
 thiserror = "2.0.21"
 uniffi = { version = "0.32.2", features = ["cli"] }
