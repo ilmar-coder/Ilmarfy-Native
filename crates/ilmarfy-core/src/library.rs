@@ -239,10 +239,22 @@ impl Library {
     pub fn artists(&self) -> Result<Vec<ArtistSummary>> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT artist, COUNT(*), MAX(cover_url) FROM tracks WHERE restricted = 0 GROUP BY artist COLLATE NOCASE ORDER BY artist COLLATE NOCASE",
+                // Capa do artista: a que mais se repete nas músicas dele (desempate: a mais tocada).
+                // Uma capa errada numa música só não vira a cara do artista.
+                "SELECT t.artist, COUNT(*),
+                        COALESCE((SELECT c.cover_url FROM tracks c
+                                  WHERE c.artist = t.artist COLLATE NOCASE AND c.restricted = 0 AND c.cover_url <> ''
+                                  GROUP BY c.cover_url ORDER BY COUNT(*) DESC, SUM(c.play_count) DESC LIMIT 1), '')
+                 FROM tracks t WHERE t.restricted = 0 GROUP BY t.artist COLLATE NOCASE ORDER BY t.artist COLLATE NOCASE",
             )?;
-            stmt.query_map([], |r| Ok(ArtistSummary { name: r.get(0)?, track_count: r.get(1)?, cover_url: r.get(2)? }))?
-                .collect()
+            stmt.query_map([], |r| {
+                Ok(ArtistSummary {
+                    name: r.get(0)?,
+                    track_count: r.get(1)?,
+                    cover_url: r.get(2)?,
+                })
+            })?
+            .collect()
         })
     }
 
@@ -479,6 +491,23 @@ mod tests {
         assert_eq!(most.first().unwrap().id, "4");
         assert_eq!(lib.tracks(TrackOrder::Title, true).unwrap().len(), 5);
         assert_eq!(lib.restricted_tracks().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn capa_do_artista_e_a_que_mais_se_repete() {
+        let lib = Library::in_memory().unwrap();
+        let with_cover = |id: &str, cover: &str, plays: i64| Track {
+            cover_url: cover.into(),
+            ..t(id, id, "Deep Purple", "", plays, false)
+        };
+        lib.replace_tracks(&[
+            with_cover("1", "machine-head.jpg", 1),
+            with_cover("2", "machine-head.jpg", 2),
+            with_cover("3", "capa-errada-zzz.jpg", 50),
+            with_cover("4", "", 0),
+        ])
+        .unwrap();
+        assert_eq!(lib.artists().unwrap()[0].cover_url, "machine-head.jpg");
     }
 
     #[test]

@@ -1,1 +1,3 @@
-- "Sua Biblioteca" na barra lateral: arraste os itens (Mais tocadas, playlists, Curtidas…) para deixar na ordem que quiser. A ordem fica guardada neste computador.
+- Flow: 👎 e 🚫 agora tiram a música (ou o artista) também da fila de reprodução; se for a que está tocando, pula para a próxima.
+- Capa dos artistas: usa a capa que mais se repete nas músicas dele, então uma capa errada numa música só não vira a cara do artista.
+- Adicionar músicas: manda a capa do resultado do YouTube Music junto, para a música nova já chegar com a capa certa.

@@ -190,6 +190,21 @@ object PlayerConnection {
         return (0 until c.mediaItemCount).map { it to c.getMediaItemAt(it) }
     }
 
+    /**
+     * Tira da fila músicas do Flow recusadas: a faixa (videoId) e, se `artist` vier, todas do artista.
+     * Se a que está tocando sair, o player segue para a próxima que ficou.
+     */
+    fun removeFlow(videoId: String, artist: String? = null) {
+        val c = controller ?: return
+        for (i in c.mediaItemCount - 1 downTo 0) {
+            val item = c.getMediaItemAt(i)
+            if (!item.mediaId.startsWith(PlaybackService.FLOW_PREFIX)) continue
+            val sameTrack = item.mediaId == PlaybackService.FLOW_PREFIX + videoId
+            val sameArtist = artist != null && item.mediaMetadata.artist?.toString().equals(artist, ignoreCase = true)
+            if (sameTrack || sameArtist) c.removeMediaItem(i)
+        }
+    }
+
     fun jumpTo(index: Int) {
         controller?.run {
             seekTo(index, 0)

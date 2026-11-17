@@ -80,7 +80,7 @@ fun FlowScreen(onMessage: (String) -> Unit) {
                 restricted = r
                 tracks = tracks?.filterNot { it.videoId == t.videoId || (blockArtist && it.artist.equals(t.artist, true)) }
                 onMessage(if (blockArtist) "🚫 ${t.artist} foi para os Restritos" else "👎 \"${t.title}\" foi para os Restritos")
-                if (now.mediaId == PlaybackService.FLOW_PREFIX + t.videoId) PlayerConnection.next()
+                PlayerConnection.removeFlow(t.videoId, if (blockArtist) t.artist else null)
             }
             .onFailure { onMessage(it.friendly()) }
     }

@@ -246,6 +246,39 @@ impl Playback {
         }
     }
 
+    /// Tira da fila tudo o que `drop` apontar (ex.: músicas recusadas no Flow).
+    /// Se a que está tocando sair, pula para a próxima que ficou; sem nenhuma, para.
+    pub fn remove_where(&mut self, drop: impl Fn(&Item) -> bool) {
+        let keys: HashSet<String> = self.items.iter().filter(|(_, i)| drop(i)).map(|(k, _)| k.clone()).collect();
+        if keys.is_empty() {
+            return;
+        }
+        if self.current.as_ref().is_some_and(|c| keys.contains(c)) {
+            let mut moved = false;
+            for _ in 0..self.queue.len() {
+                match self.queue.next(true) {
+                    Some(k) if !keys.contains(k) => {
+                        moved = true;
+                        break;
+                    }
+                    Some(_) => continue,
+                    None => break,
+                }
+            }
+            if moved {
+                self.load_current();
+            } else {
+                self.stop();
+            }
+        }
+        for k in &keys {
+            if self.current.as_deref() != Some(k.as_str()) {
+                self.queue.remove(k);
+                self.items.remove(k);
+            }
+        }
+    }
+
     pub fn jump_to(&mut self, key: &str) {
         if self.queue.jump_to(key) {
             self.load_current();
@@ -517,6 +550,35 @@ fn trim_cache(dir: &Path) {
 mod tests {
     use ilmarfy_core::{DEFAULT_SERVER, Ilmarfy, TrackOrder};
     use rodio::Source;
+
+    #[test]
+    fn recusar_no_flow_tira_da_fila_e_pula_a_atual() {
+        use super::{Item, Playback};
+        use ilmarfy_core::FlowTrack;
+        let dir = std::env::temp_dir().join(format!("ilmarfy-fila-{}", std::process::id()));
+        let core = std::sync::Arc::new(Ilmarfy::open(&dir, "http://127.0.0.1:9", None).unwrap());
+        let mut p = Playback::new(core, dir.join("cache"));
+        let f = |id: &str, artist: &str| {
+            Item::Flow(FlowTrack {
+                id: id.into(),
+                title: id.into(),
+                artist: artist.into(),
+                ..Default::default()
+            })
+        };
+        p.play_items(vec![f("a", "X"), f("b", "Y"), f("c", "X"), f("d", "Z")], 0, false);
+        assert_eq!(p.current_key(), Some("f:a"));
+        // 👎 numa que está na fila
+        p.remove_where(|i| matches!(i, Item::Flow(t) if t.id == "b"));
+        let keys: Vec<String> = p.upcoming().iter().map(Item::key).collect();
+        assert_eq!(keys, ["f:a", "f:c", "f:d"]);
+        // 🚫 no artista da que está tocando: pula para a próxima que sobrou
+        p.remove_where(|i| matches!(i, Item::Flow(t) if t.artist == "X"));
+        assert_eq!(p.current_key(), Some("f:d"));
+        let keys: Vec<String> = p.upcoming().iter().map(Item::key).collect();
+        assert_eq!(keys, ["f:d"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// Baixa uma faixa da biblioteca (MP3) e uma prévia do Flow (MP4 do YouTube) e decodifica as duas.
     /// `ILMARFY_TOKEN=… cargo test -p ilmarfy-desktop decodifica -- --ignored --nocapture`

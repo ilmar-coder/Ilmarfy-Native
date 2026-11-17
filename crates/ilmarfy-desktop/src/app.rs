@@ -1933,6 +1933,13 @@ impl App {
                     if let Some(Ok((_, list))) = &mut self.flow {
                         list.retain(|x| x.id != t.id && !(block && x.artist.eq_ignore_ascii_case(&t.artist)));
                     }
+                    // Também sai da fila de reprodução (e pula, se for a que está tocando)
+                    if let Some(p) = &mut self.playback {
+                        p.remove_where(|i| match i {
+                            Item::Flow(f) => f.id == t.id || (block && f.artist.eq_ignore_ascii_case(&t.artist)),
+                            _ => false,
+                        });
+                    }
                     let scope = if block { DislikeScope::Artist } else { DislikeScope::Track };
                     self.toast(
                         ui.ctx(),

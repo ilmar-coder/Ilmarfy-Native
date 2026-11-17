@@ -339,13 +339,22 @@ impl Api {
         Ok(())
     }
 
+    /// Põe um resultado do YouTube Music na fila, mandando junto o álbum e a capa dele:
+    /// se o iTunes não tiver a música, o servidor usa essa capa (que é exatamente a dela).
     pub fn add_yt_track(&self, t: &YtTrack) -> Result<()> {
-        self.start_download(
-            &format!("https://www.youtube.com/watch?v={}", t.id),
-            &t.title,
-            &t.artist,
-            t.duration_ms,
-        )
+        self.send::<serde_json::Value>(
+            "POST",
+            "/api/spotify/download/start",
+            Some(json!({
+                "query": format!("https://www.youtube.com/watch?v={}", t.id),
+                "title": t.title,
+                "artist": t.artist,
+                "duration_ms": t.duration_ms,
+                "album": t.album,
+                "cover": t.cover,
+            })),
+        )?;
+        Ok(())
     }
 
     pub fn downloads(&self) -> Result<Vec<DownloadTask>> {
