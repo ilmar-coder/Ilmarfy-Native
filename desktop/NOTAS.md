@@ -1,2 +1,1 @@
-- Arrastar e soltar como no Spotify: arraste uma música até uma playlist (ou Músicas curtidas) na barra lateral para adicionar, e arraste dentro da playlist para mudar a ordem.
-- Artistas com capas quadradas, como no início.
+- "Sua Biblioteca" na barra lateral: arraste os itens (Mais tocadas, playlists, Curtidas…) para deixar na ordem que quiser. A ordem fica guardada neste computador.

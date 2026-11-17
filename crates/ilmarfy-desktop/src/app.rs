@@ -20,6 +20,29 @@ mod admin;
 
 const ROW_H: f32 = 56.0;
 
+/// Item da barra lateral sendo arrastado (para mudar a ordem)
+#[derive(Clone)]
+struct DragSide {
+    key: String,
+}
+
+enum SideCover {
+    Special(Color32, Color32, &'static str),
+    Mosaic(Vec<String>, String),
+}
+
+/// Um item de "Sua Biblioteca"
+struct SideEntry {
+    /// Chave estável para lembrar a ordem ("fav", "pl:<id>", …)
+    key: String,
+    label: String,
+    subtitle: String,
+    view: View,
+    cover: SideCover,
+    /// Aceita músicas arrastadas? None = não; Some(None) = curtidas; Some(Some((id, nome))) = playlist
+    drop: Option<Option<(String, String)>>,
+}
+
 /// Música sendo arrastada (para soltar numa playlist da barra lateral ou reordenar)
 #[derive(Clone)]
 struct DragTrack {
@@ -132,6 +155,8 @@ pub struct App {
     update: Option<updater::Release>,
     restricted_count: usize,
     admin: admin::AdminState,
+    /// Ordem escolhida para "Sua Biblioteca" (guardada neste computador)
+    sidebar_order: Vec<String>,
     update_busy: bool,
     update_hidden: bool,
     update_status: String,
@@ -237,10 +262,15 @@ impl App {
             update: None,
             restricted_count: 0,
             admin: Default::default(),
+            sidebar_order: Vec::new(),
             update_busy: false,
             update_hidden: false,
             update_status: String::new(),
         };
+        app.sidebar_order = std::fs::read(app.data_dir.join("sidebar_order.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         app.setup_media_controls();
         #[cfg(not(test))]
         app.check_update(&cc.egui_ctx, false);
@@ -746,7 +776,7 @@ impl App {
     /// Item da biblioteca: capa pequena + nome + descrição
     fn library_item(&mut self, ui: &mut Ui, label: &str, subtitle: &str, view: View, cover: impl FnOnce(&mut Ui, Rect)) -> egui::Response {
         let selected = self.view == view;
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 60.0), Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 60.0), Sense::click_and_drag());
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
         if selected || resp.hovered() {
             ui.painter().rect_filled(rect, 6.0, if selected { HOVER } else { CARD });
@@ -764,12 +794,145 @@ impl App {
         resp
     }
 
+    fn sidebar_entries(&self) -> Vec<SideEntry> {
+        let special = |key: &str, label: &str, subtitle: String, view: View, top, bottom, sym| SideEntry {
+            key: key.into(),
+            label: label.into(),
+            subtitle,
+            view,
+            cover: SideCover::Special(top, bottom, sym),
+            drop: None,
+        };
+        let mut items = vec![
+            SideEntry {
+                drop: Some(None),
+                ..special(
+                    "fav",
+                    "Músicas curtidas",
+                    format!("Playlist • {} músicas", self.favorites.len()),
+                    View::Favorites,
+                    Color32::from_rgb(0x45, 0x0A, 0xF5),
+                    Color32::from_rgb(0xC4, 0xEF, 0xD9),
+                    "♥",
+                )
+            },
+            special(
+                "flow",
+                "Ilmarfy Flow",
+                "Descobertas para você".into(),
+                View::Flow,
+                Color32::from_rgb(0x1D, 0xB9, 0x54),
+                Color32::from_rgb(0x0B, 0x4D, 0x7A),
+                "🌊",
+            ),
+            special(
+                "offline",
+                "Offline",
+                format!("{} músicas no computador", self.downloaded.len()),
+                View::Offline,
+                Color32::from_rgb(0x0E, 0x7C, 0x4F),
+                Color32::from_rgb(0x06, 0x2E, 0x1E),
+                "⬇",
+            ),
+            special(
+                "ranking",
+                "Mais tocadas",
+                "Ranking • top 100".into(),
+                View::Ranking,
+                Color32::from_rgb(0xE9, 0x5F, 0x2A),
+                Color32::from_rgb(0x5A, 0x14, 0x3C),
+                "🏆",
+            ),
+            special(
+                "restricted",
+                "Restritas",
+                format!("{} músicas guardadas", self.restricted_count),
+                View::Restricted,
+                Color32::from_rgb(0x8A, 0x1C, 0x2B),
+                Color32::from_rgb(0x2A, 0x0A, 0x10),
+                "🚫",
+            ),
+        ];
+        for p in &self.playlists {
+            items.push(SideEntry {
+                key: format!("pl:{}", p.id),
+                label: p.name.clone(),
+                subtitle: format!("Playlist • {} músicas", p.track_ids.len()),
+                view: View::Playlist(p.id.clone()),
+                cover: SideCover::Mosaic(self.playlist_covers(p), p.name.clone()),
+                drop: Some(Some((p.id.clone(), p.name.clone()))),
+            });
+        }
+        items.push(special(
+            "artists",
+            "Artistas",
+            format!("{} artistas", self.artists.len()),
+            View::Artists,
+            Color32::from_rgb(0x8D, 0x67, 0xAB),
+            Color32::from_rgb(0x2E, 0x1F, 0x3B),
+            "👤",
+        ));
+        items.push(special(
+            "songs",
+            "Todas as músicas",
+            format!("{} músicas", self.tracks_cache.len()),
+            View::Songs,
+            Color32::from_rgb(0xE9, 0x14, 0x29),
+            Color32::from_rgb(0x4A, 0x06, 0x0D),
+            "♪",
+        ));
+        // Ordem escolhida pelo usuário; itens novos (ex.: playlist nova) ficam no fim
+        let rank = |k: &str| self.sidebar_order.iter().position(|o| o == k).unwrap_or(usize::MAX);
+        items.sort_by_key(|e| rank(&e.key));
+        items
+    }
+
+    fn sidebar_items(&mut self, ui: &mut Ui) {
+        let entries = self.sidebar_entries();
+        let keys: Vec<String> = entries.iter().map(|e| e.key.clone()).collect();
+        let mut new_order: Option<Vec<String>> = None;
+        for e in entries {
+            let cover = e.cover;
+            let resp = self.library_item(ui, &e.label, &e.subtitle, e.view, |ui, r| match &cover {
+                SideCover::Special(top, bottom, sym) => paint_special(ui, r, *top, *bottom, sym),
+                SideCover::Mosaic(covers, seed) => ui::mosaic_at(ui, r, covers, seed, 4.0),
+            });
+            if let Some(target) = e.drop {
+                self.accept_track_drop(ui, &resp, target);
+            }
+            resp.dnd_set_drag_payload(DragSide { key: e.key.clone() });
+            if resp.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                drag_label(ui.ctx(), &e.label);
+            }
+            if let Some(pos) = ui.ctx().pointer_hover_pos()
+                && resp.dnd_hover_payload::<DragSide>().is_some_and(|d| d.key != e.key)
+            {
+                let upper = pos.y < resp.rect.center().y;
+                let y = if upper { resp.rect.top() } else { resp.rect.bottom() };
+                ui.painter()
+                    .hline(resp.rect.left() + 8.0..=resp.rect.right() - 8.0, y, egui::Stroke::new(2.0, GREEN));
+                if let Some(d) = resp.dnd_release_payload::<DragSide>() {
+                    new_order = Some(reordered(&keys, &d.key, &e.key, upper));
+                }
+            }
+        }
+        if let Some(order) = new_order {
+            if let Ok(b) = serde_json::to_vec(&order) {
+                let _ = std::fs::write(self.data_dir.join("sidebar_order.json"), b);
+            }
+            self.sidebar_order = order;
+        }
+    }
+
     /// Aceita uma música arrastada sobre um item da biblioteca (playlist ou curtidas)
     fn accept_track_drop(&mut self, ui: &Ui, resp: &egui::Response, playlist: Option<(String, String)>) {
-        if resp.dnd_hover_payload::<DragTrack>().is_some() {
-            ui.painter()
-                .rect_stroke(resp.rect, 6.0, egui::Stroke::new(2.0, GREEN), egui::StrokeKind::Inside);
+        // Só olha músicas: pegar o pacote de outro tipo (ex.: item da barra) faria o egui descartá-lo
+        if resp.dnd_hover_payload::<DragTrack>().is_none() {
+            return;
         }
+        ui.painter()
+            .rect_stroke(resp.rect, 6.0, egui::Stroke::new(2.0, GREEN), egui::StrokeKind::Inside);
         let Some(drag) = resp.dnd_release_payload::<DragTrack>() else {
             return;
         };
@@ -839,78 +1002,7 @@ impl App {
                 });
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    let fav = self.favorites.len();
-                    let resp = self.library_item(
-                        ui,
-                        "Músicas curtidas",
-                        &format!("Playlist • {fav} músicas"),
-                        View::Favorites,
-                        |ui, r| {
-                            paint_special(ui, r, Color32::from_rgb(0x45, 0x0A, 0xF5), Color32::from_rgb(0xC4, 0xEF, 0xD9), "♥");
-                        },
-                    );
-                    self.accept_track_drop(ui, &resp, None);
-                    self.library_item(ui, "Ilmarfy Flow", "Descobertas para você", View::Flow, |ui, r| {
-                        paint_special(
-                            ui,
-                            r,
-                            Color32::from_rgb(0x1D, 0xB9, 0x54),
-                            Color32::from_rgb(0x0B, 0x4D, 0x7A),
-                            "🌊",
-                        );
-                    });
-                    let off = self.downloaded.len();
-                    self.library_item(ui, "Offline", &format!("{off} músicas no computador"), View::Offline, |ui, r| {
-                        paint_special(ui, r, Color32::from_rgb(0x0E, 0x7C, 0x4F), Color32::from_rgb(0x06, 0x2E, 0x1E), "⬇");
-                    });
-                    self.library_item(ui, "Mais tocadas", "Ranking • top 100", View::Ranking, |ui, r| {
-                        paint_special(
-                            ui,
-                            r,
-                            Color32::from_rgb(0xE9, 0x5F, 0x2A),
-                            Color32::from_rgb(0x5A, 0x14, 0x3C),
-                            "🏆",
-                        );
-                    });
-                    let n = self.restricted_count;
-                    self.library_item(ui, "Restritas", &format!("{n} músicas guardadas"), View::Restricted, |ui, r| {
-                        paint_special(
-                            ui,
-                            r,
-                            Color32::from_rgb(0x8A, 0x1C, 0x2B),
-                            Color32::from_rgb(0x2A, 0x0A, 0x10),
-                            "🚫",
-                        );
-                    });
-                    let lists = self.playlists.clone();
-                    for p in lists {
-                        let covers = self.playlist_covers(&p);
-                        let n = p.track_ids.len();
-                        let resp = self.library_item(
-                            ui,
-                            &p.name,
-                            &format!("Playlist • {n} músicas"),
-                            View::Playlist(p.id.clone()),
-                            |ui, r| {
-                                ui::mosaic_at(ui, r, &covers, &p.name, 4.0);
-                            },
-                        );
-                        self.accept_track_drop(ui, &resp, Some((p.id.clone(), p.name.clone())));
-                    }
-                    let artists = self.artists.len();
-                    self.library_item(ui, "Artistas", &format!("{artists} artistas"), View::Artists, |ui, r| {
-                        paint_special(
-                            ui,
-                            r,
-                            Color32::from_rgb(0x8D, 0x67, 0xAB),
-                            Color32::from_rgb(0x2E, 0x1F, 0x3B),
-                            "👤",
-                        );
-                    });
-                    let songs = self.tracks_cache.len();
-                    self.library_item(ui, "Todas as músicas", &format!("{songs} músicas"), View::Songs, |ui, r| {
-                        paint_special(ui, r, Color32::from_rgb(0xE9, 0x14, 0x29), Color32::from_rgb(0x4A, 0x06, 0x0D), "♪");
-                    });
+                    self.sidebar_items(ui);
                     ui.add_space(8.0);
                     let status = if self.syncing {
                         "Sincronizando…".to_string()
@@ -1047,21 +1139,7 @@ impl App {
                     });
                     if resp.dragged() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                        if let Some(pos) = ui.ctx().pointer_hover_pos() {
-                            egui::Area::new(egui::Id::unique("arrastando"))
-                                .order(egui::Order::Tooltip)
-                                .fixed_pos(pos + Vec2::new(14.0, 10.0))
-                                .interactable(false)
-                                .show(ui.ctx(), |ui| {
-                                    egui::Frame::new()
-                                        .fill(Color32::from_rgb(0x2E, 0x77, 0xD0))
-                                        .corner_radius(6)
-                                        .inner_margin(egui::Margin::symmetric(10, 6))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(&t.title).font(ui::font_bold(13.0)).color(TEXT));
-                                        });
-                                });
-                        }
+                        drag_label(ui.ctx(), &t.title);
                     }
                     if let Some(pid) = &reorder
                         && let Some(pos) = ui.ctx().pointer_hover_pos()
@@ -2280,6 +2358,33 @@ fn paint_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color32) {
     ui.painter().add(egui::Shape::mesh(mesh));
 }
 
+/// `keys` com `moving` tirado do lugar e posto antes (`upper`) ou depois de `target`
+fn reordered(keys: &[String], moving: &str, target: &str, upper: bool) -> Vec<String> {
+    let mut order: Vec<String> = keys.iter().filter(|k| *k != moving).cloned().collect();
+    let at = order.iter().position(|k| k == target).unwrap_or(order.len());
+    let at = if upper { at } else { (at + 1).min(order.len()) };
+    order.insert(at, moving.to_string());
+    order
+}
+
+/// Etiqueta que acompanha o cursor enquanto se arrasta algo
+fn drag_label(ctx: &egui::Context, text: &str) {
+    let Some(pos) = ctx.pointer_hover_pos() else { return };
+    egui::Area::new(egui::Id::unique("arrastando"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(pos + Vec2::new(14.0, 10.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(Color32::from_rgb(0x2E, 0x77, 0xD0))
+                .corner_radius(6)
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(text).font(ui::font_bold(13.0)).color(TEXT));
+                });
+        });
+}
+
 fn paint_special(ui: &Ui, rect: Rect, top: Color32, bottom: Color32, symbol: &str) {
     paint_gradient(ui, rect, top, bottom);
     ui.painter()
@@ -2479,6 +2584,14 @@ mod tests {
     }
 
     #[test]
+    fn reordena_a_barra_lateral() {
+        let k: Vec<String> = ["fav", "flow", "ranking", "songs"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(reordered(&k, "ranking", "fav", true), ["ranking", "fav", "flow", "songs"]);
+        assert_eq!(reordered(&k, "fav", "ranking", false), ["flow", "ranking", "fav", "songs"]);
+        assert_eq!(reordered(&k, "flow", "songs", false), ["fav", "ranking", "songs", "flow"]);
+    }
+
+    #[test]
     #[ignore]
     fn telas_com_dados_reais() {
         let token = std::env::var("ILMARFY_TOKEN").expect("ILMARFY_TOKEN");
@@ -2565,6 +2678,34 @@ mod tests {
         h.state_mut().go(View::Artists);
         wait(&mut h, 3, |_| false);
         snap(&mut h, "d5-artistas");
+        // Barra lateral: arrasta "Mais tocadas" para cima de "Músicas curtidas"
+        {
+            let mv = |h: &mut Harness<'_, App>, x: f32, y: f32| {
+                for _ in 0..3 {
+                    h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(x, y)));
+                    h.step();
+                }
+            };
+            let press = |h: &mut Harness<'_, App>, x: f32, y: f32, pressed: bool| {
+                h.input_mut().events.push(egui::Event::PointerButton {
+                    pos: egui::pos2(x, y),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                });
+                h.step();
+            };
+            mv(&mut h, 150.0, 489.0);
+            press(&mut h, 150.0, 489.0, true);
+            for y in [470.0, 420.0, 360.0, 300.0, 282.0] {
+                mv(&mut h, 150.0, y);
+            }
+            snap(&mut h, "d5b-arrastando-barra-lateral");
+            press(&mut h, 150.0, 282.0, false);
+            wait(&mut h, 1, |_| false);
+            snap(&mut h, "d5c-barra-reordenada");
+            assert_eq!(h.state().sidebar_order.first().map(String::as_str), Some("ranking"));
+        }
 
         h.state_mut().go(View::Flow);
         wait(&mut h, 40, |a| a.flow.is_some());
