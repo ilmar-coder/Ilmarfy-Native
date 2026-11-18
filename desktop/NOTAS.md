@@ -1,1 +1,3 @@
-- Artistas e playlists abrem do começo da lista (antes herdavam a rolagem da página anterior); ao voltar, a página fica onde você parou.
+- Letra acompanha a música que está tocando: ao trocar de faixa (próxima, anterior, clique na lista ou fim da música) a letra troca junto, começa do topo, e a resposta atrasada de uma faixa anterior não toma mais o lugar da atual.
+- Letras mais certas (no servidor): a busca confere artista e título, acha letra para "Ao Vivo", "(Live …)" e afins, e só sincroniza quando a duração bate com a versão (ao vivo mostra o texto sem marcação de tempo).
+- Artistas e playlists abrem do começo da lista.

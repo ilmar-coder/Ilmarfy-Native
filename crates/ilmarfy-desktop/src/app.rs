@@ -555,7 +555,12 @@ impl App {
                     self.flow = Some(r);
                 }
                 Event::Restricted(r) => self.restricted = Some(r),
-                Event::Lyrics(id, lines, plain) => self.lyrics = Some((id, lines, plain)),
+                // Resposta atrasada de uma faixa que já passou não pode tomar o lugar da atual
+                Event::Lyrics(id, lines, plain) => {
+                    if self.current_track_id().as_deref() == Some(id.as_str()) {
+                        self.lyrics = Some((id, lines, plain));
+                    }
+                }
                 Event::Message(m) => self.toast(ctx, m),
                 Event::Changed => self.lib_version += 1,
                 Event::UpdateChecked(r, manual) => {
@@ -645,13 +650,7 @@ impl App {
     }
 
     fn load_lyrics(&mut self, ctx: &egui::Context) {
-        let Some(id) = self
-            .playback
-            .as_ref()
-            .and_then(|p| p.current())
-            .and_then(|i| i.track_id())
-            .map(String::from)
-        else {
+        let Some(id) = self.current_track_id() else {
             self.lyrics = None;
             return;
         };
@@ -2271,10 +2270,13 @@ impl App {
                 ui.label(RichText::new("Letra").font(ui::font_bold(18.0)));
                 ui.add_space(8.0);
                 let pos = self.playback.as_ref().map(|p| p.position()).unwrap_or_default();
-                match &self.lyrics {
-                    Some((_, Some(lines), _)) => {
+                let current_id = self.current_track_id();
+                let lyrics = self.lyrics.as_ref().filter(|l| Some(&l.0) == current_id.as_ref());
+                match lyrics {
+                    Some((id, Some(lines), _)) => {
                         let current = lines.iter().rposition(|l| l.time_ms <= pos.as_millis() as u64);
-                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        // Rolagem própria de cada faixa: a letra nova começa do topo
+                        egui::ScrollArea::vertical().id_salt(("letra", id)).auto_shrink([false, false]).show(ui, |ui| {
                             for (i, l) in lines.iter().enumerate() {
                                 let active = Some(i) == current;
                                 let past = current.is_some_and(|c| i < c);
@@ -2296,8 +2298,13 @@ impl App {
                             }
                         });
                     }
-                    Some((_, None, plain)) => {
-                        egui::ScrollArea::vertical().show(ui, |ui| ui.label(RichText::new(plain.as_str()).font(ui::font(15.0))));
+                    Some((id, None, plain)) => {
+                        egui::ScrollArea::vertical().id_salt(("letra", id)).auto_shrink([false, false]).show(ui, |ui| {
+                            ui.label(RichText::new(plain.as_str()).font(ui::font_bold(17.0)).color(SUB));
+                        });
+                    }
+                    None if current_id.is_some() => {
+                        ui.label(RichText::new("Carregando…").color(SUB));
                     }
                     None => {
                         ui.label(RichText::new("Sem letra (prévia do Flow ou nada tocando).").color(SUB));
@@ -2420,8 +2427,11 @@ impl eframe::App for App {
             self.reload();
         }
         let changed = self.playback.as_mut().map(|p| p.tick()).unwrap_or(false);
-        // Carrega a letra quando a faixa muda ou ao abrir o painel de letra
-        if changed || (self.side_panel == SidePanel::Lyrics && self.lyrics.is_none()) {
+        // A letra acompanha a faixa atual: carrega quando a faixa muda (por qualquer caminho:
+        // próxima, anterior, clique na lista, fim da música) ou ao abrir o painel
+        let want = self.current_track_id();
+        let have = self.lyrics.as_ref().map(|l| l.0.clone());
+        if self.side_panel == SidePanel::Lyrics && want != have {
             self.load_lyrics(ctx);
         }
         self.update_media_info(changed);
