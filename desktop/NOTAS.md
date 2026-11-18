@@ -1,3 +1,1 @@
-- Flow: 👎 e 🚫 agora tiram a música (ou o artista) também da fila de reprodução; se for a que está tocando, pula para a próxima.
-- Capa dos artistas: usa a capa que mais se repete nas músicas dele, então uma capa errada numa música só não vira a cara do artista.
-- Adicionar músicas: manda a capa do resultado do YouTube Music junto, para a música nova já chegar com a capa certa.
+- Artistas e playlists abrem do começo da lista (antes herdavam a rolagem da página anterior); ao voltar, a página fica onde você parou.

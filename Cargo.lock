@@ -2177,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "ilmarfy-cli"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "dirs",
  "ilmarfy-core",
@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "ilmarfy-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -2200,7 +2200,7 @@ dependencies = [
 
 [[package]]
 name = "ilmarfy-desktop"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "dirs",
  "eframe",
@@ -2219,7 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "ilmarfy-ffi"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "ilmarfy-core",
  "thiserror 2.0.21",

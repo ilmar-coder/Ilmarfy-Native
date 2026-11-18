@@ -50,7 +50,7 @@ struct DragTrack {
     title: String,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 enum View {
     Home,
     Search,
@@ -1115,7 +1115,10 @@ impl App {
             _ => None,
         };
         let dragging = egui::DragAndDrop::has_payload_of_type::<DragTrack>(ui.ctx());
+        // Cada página (artista, playlist…) tem a própria rolagem: abre do topo e,
+        // ao voltar, fica onde estava. Sem isso a rolagem de uma passava para a outra.
         egui::ScrollArea::vertical()
+            .id_salt(("faixas", &self.view))
             .auto_shrink([false, false])
             .show_rows(ui, ROW_H, tracks.len(), |ui, range| {
                 // Rolagem automática ao arrastar perto das bordas
