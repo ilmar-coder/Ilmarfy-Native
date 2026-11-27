@@ -211,9 +211,19 @@ impl Ilmarfy {
     pub fn download_playlist(
         &self,
         playlist_id: &str,
-        mut on_track: impl FnMut(usize, usize, &Track) -> bool,
+        on_track: impl FnMut(usize, usize, &Track) -> bool,
     ) -> Result<(u32, Vec<(String, Error)>)> {
         let tracks = self.library.playlist_tracks(playlist_id)?;
+        self.download_tracks(&tracks, on_track)
+    }
+
+    /// Baixa as faixas (de qualquer lista ou seleção) que ainda não estão no aparelho.
+    /// Mesmo contrato de [`Self::download_playlist`].
+    pub fn download_tracks(
+        &self,
+        tracks: &[Track],
+        mut on_track: impl FnMut(usize, usize, &Track) -> bool,
+    ) -> Result<(u32, Vec<(String, Error)>)> {
         let mut downloaded = 0;
         let mut failures = Vec::new();
         for (i, t) in tracks.iter().enumerate() {

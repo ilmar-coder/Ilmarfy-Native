@@ -12,9 +12,11 @@ egui_extras = { version = "0.37.0", features = ["all_loaders", "http"] }
 egui_system_font_provider = "0.37"
 epaint_default_fonts = { version = "0.37", features = ["monochrome_emoji_fonts"] }
 ilmarfy-core = { path = "../ilmarfy-core" }
+id3 = "1.16"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+rfd = "0.17"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "mp3", "mp4", "flac", "vorbis", "wav"] }
 souvlaki = "0.9.3"
 ureq = { version = "3.5.2", features = ["json"] }

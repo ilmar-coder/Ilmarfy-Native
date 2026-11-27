@@ -17,6 +17,10 @@ use std::time::Duration;
 
 #[path = "admin.rs"]
 mod admin;
+#[path = "export.rs"]
+mod export;
+#[path = "select.rs"]
+mod select;
 
 const ROW_H: f32 = 56.0;
 
@@ -48,6 +52,8 @@ struct SideEntry {
 struct DragTrack {
     id: String,
     title: String,
+    /// Todas as músicas arrastadas (a selecionada + as outras da seleção)
+    ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash)]
@@ -65,6 +71,7 @@ enum View {
     Add,
     Flow,
     Settings,
+    Export,
 }
 
 /// Sementes e faixas do Flow, ou o erro
@@ -82,6 +89,8 @@ enum Event {
     UpdateChecked(Result<Option<updater::Release>, String>, bool),
     UpdateInstalled(Result<std::process::Command, String>),
     Admin(admin::AdminEvent),
+    /// Download de uma lista terminou: (chave do botão, mensagem)
+    DownloadDone(String, String),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -151,6 +160,13 @@ pub struct App {
     side_panel: SidePanel,
     lyrics: Option<(String, Option<Vec<LyricLine>>, String)>,
     downloading: HashSet<String>,
+    /// Andamento dos downloads de listas: chave -> (feitas, total)
+    dl_progress: Arc<std::sync::Mutex<HashMap<String, (usize, usize)>>>,
+    /// Músicas selecionadas na lista atual (clique, ⌘/Ctrl+clique, Shift+clique)
+    selected: HashSet<String>,
+    sel_anchor: Option<usize>,
+    sel_view: Option<View>,
+    export: export::ExportState,
     new_playlist: Option<String>,
     update: Option<updater::Release>,
     restricted_count: usize,
@@ -258,6 +274,14 @@ impl App {
             side_panel: SidePanel::None,
             lyrics: None,
             downloading: HashSet::new(),
+            dl_progress: Default::default(),
+            selected: HashSet::new(),
+            sel_anchor: None,
+            sel_view: None,
+            export: export::ExportState {
+                tags: true,
+                ..Default::default()
+            },
             new_playlist: None,
             update: None,
             restricted_count: 0,
@@ -523,6 +547,11 @@ impl App {
     fn handle_events(&mut self, ctx: &egui::Context) {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
+                Event::DownloadDone(key, msg) => {
+                    self.downloading.remove(&key);
+                    self.dl_progress.lock().unwrap().remove(&key);
+                    self.toast(ctx, msg);
+                }
                 Event::Synced(r) => {
                     self.syncing = false;
                     match r {
@@ -938,10 +967,18 @@ impl App {
         let ctx = ui.ctx().clone();
         let drag = (*drag).clone();
         match playlist {
+            Some((pid, name)) if drag.ids.len() > 1 => {
+                let ids = drag.ids.clone();
+                self.spawn(&ctx, move |c| select::add_many(c, &pid, &name, &ids));
+            }
             Some((pid, name)) => self.spawn(&ctx, move |c| match c.add_to_playlist(&pid, &drag.id) {
                 Ok(_) => Event::Message(format!("\"{}\" adicionada a \"{name}\"", drag.title)),
                 Err(e) => Event::Message(e.to_string()),
             }),
+            None if drag.ids.len() > 1 => {
+                let ids: Vec<String> = drag.ids.iter().filter(|id| !self.favorites.contains(*id)).cloned().collect();
+                self.spawn(&ctx, move |c| select::like_many(c, &ids));
+            }
             None => {
                 if self.favorites.contains(&drag.id) {
                     self.toast(&ctx, format!("\"{}\" já está nas curtidas", drag.title));
@@ -977,6 +1014,7 @@ impl App {
                     "Adicionar músicas".to_string()
                 };
                 self.nav_item(ui, "➕", &label, View::Add);
+                self.nav_item(ui, "💾", "Exportar para pendrive", View::Export);
             });
         ui.add_space(8.0);
         // Bloco de baixo: sua biblioteca
@@ -1073,6 +1111,11 @@ impl App {
         ui.add_space(10.0);
     }
 
+    /// Chave do botão de baixar da página atual
+    fn view_download_key(&self) -> String {
+        format!("{:?}", self.view)
+    }
+
     /// Tabela de músicas virtualizada: # | Título | Álbum | ♥ | duração
     fn track_table(&mut self, ui: &mut Ui, tracks: Vec<Track>) {
         let width = ui.available_width() - 24.0;
@@ -1107,6 +1150,15 @@ impl App {
         let current = self.current_track_id();
         let playing = self.is_playing();
         let mut action: Option<(usize, TrackAction)> = None;
+        // A seleção vale para a lista em que foi feita
+        if self.sel_view.as_ref() != Some(&self.view) {
+            self.selected.clear();
+            self.sel_anchor = None;
+            self.sel_view = Some(self.view.clone());
+        }
+        self.selection_keys(ui, &tracks);
+        let mods = ui.input(|i| i.modifiers);
+        let mut batch: Option<select::Batch> = None;
         // Playlist que aceita reordenar arrastando (a busca e as outras listas não têm ordem própria)
         let reorder = match &self.view {
             View::Playlist(id) => Some(id.clone()),
@@ -1135,14 +1187,31 @@ impl App {
                 for i in range {
                     let t = &tracks[i];
                     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click_and_drag());
+                    let is_sel = self.selected.contains(&t.id);
+                    // Arrastar uma selecionada leva a seleção inteira (na ordem da lista)
+                    let ids: Vec<String> = if is_sel && self.selected.len() > 1 {
+                        tracks
+                            .iter()
+                            .filter(|x| self.selected.contains(&x.id))
+                            .map(|x| x.id.clone())
+                            .collect()
+                    } else {
+                        vec![t.id.clone()]
+                    };
+                    if resp.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        let label = if ids.len() > 1 {
+                            format!("{} músicas", ids.len())
+                        } else {
+                            t.title.clone()
+                        };
+                        drag_label(ui.ctx(), &label);
+                    }
                     resp.dnd_set_drag_payload(DragTrack {
                         id: t.id.clone(),
                         title: t.title.clone(),
+                        ids,
                     });
-                    if resp.dragged() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                        drag_label(ui.ctx(), &t.title);
-                    }
                     if let Some(pid) = &reorder
                         && let Some(pos) = ui.ctx().pointer_hover_pos()
                         && resp.dnd_hover_payload::<DragTrack>().is_some_and(|d| d.id != t.id)
@@ -1164,7 +1233,10 @@ impl App {
                     }
                     let row = rect.shrink2(Vec2::new(12.0, 0.0));
                     let is_current = current.as_deref() == Some(t.id.as_str());
-                    if resp.hovered() {
+                    if is_sel {
+                        ui.painter()
+                            .rect_filled(row, 6.0, Color32::from_white_alpha(if resp.hovered() { 48 } else { 36 }));
+                    } else if resp.hovered() {
                         ui.painter().rect_filled(row, 6.0, Color32::from_white_alpha(18));
                     }
                     let p = ui.painter();
@@ -1235,8 +1307,37 @@ impl App {
                         SUB,
                     );
 
-                    if resp.double_clicked() || resp.clicked() {
+                    // Como no Spotify: clique seleciona, duplo clique (ou o ▶ do número) toca
+                    if resp.double_clicked() {
                         action = Some((i, TrackAction::Play));
+                    } else if resp.clicked() {
+                        let on_number = resp.interact_pointer_pos().is_some_and(|p| p.x < row.left() + 48.0);
+                        if mods.command {
+                            if !self.selected.remove(&t.id) {
+                                self.selected.insert(t.id.clone());
+                            }
+                            self.sel_anchor = Some(i);
+                        } else if mods.shift {
+                            let a = self.sel_anchor.unwrap_or(i);
+                            for x in &tracks[a.min(i)..=a.max(i)] {
+                                self.selected.insert(x.id.clone());
+                            }
+                        } else if on_number {
+                            action = Some((i, TrackAction::Play));
+                        } else {
+                            self.selected.clear();
+                            self.selected.insert(t.id.clone());
+                            self.sel_anchor = Some(i);
+                        }
+                    }
+                    if is_sel && self.selected.len() > 1 {
+                        // Menu da seleção inteira
+                        resp.context_menu(|ui| {
+                            if let Some(b) = self.batch_menu(ui) {
+                                batch = Some(b);
+                            }
+                        });
+                        continue;
                     }
                     resp.context_menu(|ui| {
                         ui.set_min_width(220.0);
@@ -1295,8 +1396,16 @@ impl App {
                         }
                     });
                 }
-                ui.add_space(24.0);
+                // Espaço para a barra da seleção não cobrir a última música
+                ui.add_space(if self.selected.is_empty() { 24.0 } else { 90.0 });
             });
+        if let Some(b) = self.selection_bar(ui) {
+            batch = Some(b);
+        }
+        if let Some(b) = batch {
+            let chosen: Vec<Track> = tracks.iter().filter(|t| self.selected.contains(&t.id)).cloned().collect();
+            self.batch_action(ui.ctx(), chosen, b);
+        }
         if let Some((i, a)) = action {
             self.track_action(ui.ctx(), &tracks, i, a);
         }
@@ -1568,31 +1677,7 @@ impl App {
                 self.page_header(ui, "Playlist", &p.name, &summary, color, |ui| {
                     ui::mosaic(ui, &covers, &p.name, 200.0, 6.0);
                 });
-                let offline = tracks.iter().filter(|t| self.downloaded.contains(&t.id)).count();
-                self.action_row(ui, &tracks, |app, ui| {
-                    let key = format!("playlist:{id}");
-                    if app.downloading.contains(&key) {
-                        ui.spinner();
-                        ui.label(RichText::new("Baixando para offline…").color(SUB));
-                    } else if !tracks.is_empty() && offline == tracks.len() {
-                        ui.label(RichText::new("⬇ Disponível offline").color(GREEN));
-                    } else if ui::icon_button(ui, "⬇", 24.0, false, "Baixar para ouvir offline").clicked() {
-                        app.downloading.insert(key);
-                        let name = p.name.clone();
-                        let pid = id.clone();
-                        app.spawn(ui.ctx(), move |c| match c.download_playlist(&pid, |_, _, _| true) {
-                            Ok((n, fails)) => Event::Message(format!(
-                                "\"{name}\": {n} músicas baixadas{}",
-                                if fails.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(", {} falharam", fails.len())
-                                }
-                            )),
-                            Err(e) => Event::Message(format!("Falha ao baixar: {e}")),
-                        });
-                    }
-                });
+                self.action_row(ui, &tracks, |app, ui| app.download_button(ui, &tracks));
             }
             View::Favorites => {
                 self.page_header(
@@ -1611,7 +1696,7 @@ impl App {
                         );
                     },
                 );
-                self.action_row(ui, &tracks, |_, _| {});
+                self.action_row(ui, &tracks, |app, ui| app.download_button(ui, &tracks));
             }
             View::Ranking => {
                 let plays: i64 = tracks.iter().map(|t| t.play_count).sum();
@@ -1631,7 +1716,7 @@ impl App {
                         );
                     },
                 );
-                self.action_row(ui, &tracks, |_, _| {});
+                self.action_row(ui, &tracks, |app, ui| app.download_button(ui, &tracks));
             }
             View::Restricted => {
                 self.page_header(
@@ -1650,7 +1735,7 @@ impl App {
                         );
                     },
                 );
-                self.action_row(ui, &tracks, |_, _| {});
+                self.action_row(ui, &tracks, |app, ui| app.download_button(ui, &tracks));
             }
             View::Offline => {
                 self.page_header(
@@ -1669,7 +1754,7 @@ impl App {
                         );
                     },
                 );
-                self.action_row(ui, &tracks, |_, _| {});
+                self.action_row(ui, &tracks, |app, ui| app.offline_actions(ui));
             }
             View::Songs => {
                 self.page_header(
@@ -1688,7 +1773,7 @@ impl App {
                         );
                     },
                 );
-                self.action_row(ui, &tracks, |_, _| {});
+                self.action_row(ui, &tracks, |app, ui| app.download_button(ui, &tracks));
             }
             View::Artist(name) => {
                 let cover_url = tracks
@@ -1701,7 +1786,7 @@ impl App {
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(200.0), Sense::hover());
                     ui::cover_at(ui, rect, &cover_url, &name, 8.0);
                 });
-                self.action_row(ui, &tracks, |_, _| {});
+                self.action_row(ui, &tracks, |app, ui| app.download_button(ui, &tracks));
             }
             _ => {}
         }
@@ -2276,32 +2361,38 @@ impl App {
                     Some((id, Some(lines), _)) => {
                         let current = lines.iter().rposition(|l| l.time_ms <= pos.as_millis() as u64);
                         // Rolagem própria de cada faixa: a letra nova começa do topo
-                        egui::ScrollArea::vertical().id_salt(("letra", id)).auto_shrink([false, false]).show(ui, |ui| {
-                            for (i, l) in lines.iter().enumerate() {
-                                let active = Some(i) == current;
-                                let past = current.is_some_and(|c| i < c);
-                                let color = if active {
-                                    TEXT
-                                } else if past {
-                                    SUB
-                                } else {
-                                    DIM
-                                };
-                                let r = ui.label(
-                                    RichText::new(if l.text.is_empty() { "♪" } else { &l.text })
-                                        .font(ui::font_bold(19.0))
-                                        .color(color),
-                                );
-                                if active {
-                                    r.scroll_to_me(Some(Align::Center));
+                        egui::ScrollArea::vertical()
+                            .id_salt(("letra", id))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for (i, l) in lines.iter().enumerate() {
+                                    let active = Some(i) == current;
+                                    let past = current.is_some_and(|c| i < c);
+                                    let color = if active {
+                                        TEXT
+                                    } else if past {
+                                        SUB
+                                    } else {
+                                        DIM
+                                    };
+                                    let r = ui.label(
+                                        RichText::new(if l.text.is_empty() { "♪" } else { &l.text })
+                                            .font(ui::font_bold(19.0))
+                                            .color(color),
+                                    );
+                                    if active {
+                                        r.scroll_to_me(Some(Align::Center));
+                                    }
                                 }
-                            }
-                        });
+                            });
                     }
                     Some((id, None, plain)) => {
-                        egui::ScrollArea::vertical().id_salt(("letra", id)).auto_shrink([false, false]).show(ui, |ui| {
-                            ui.label(RichText::new(plain.as_str()).font(ui::font_bold(17.0)).color(SUB));
-                        });
+                        egui::ScrollArea::vertical()
+                            .id_salt(("letra", id))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(plain.as_str()).font(ui::font_bold(17.0)).color(SUB));
+                            });
                     }
                     None if current_id.is_some() => {
                         ui.label(RichText::new("Carregando…").color(SUB));
@@ -2503,6 +2594,7 @@ impl eframe::App for App {
                         View::Flow => self.flow_page(ui),
                         View::Settings => self.settings_page(ui),
                         View::Add => self.add_page(ui),
+                        View::Export => self.export_page(ui),
                         _ => self.list_page(ui),
                     }
                 });
@@ -2715,13 +2807,13 @@ mod tests {
                 });
                 h.step();
             };
-            mv(&mut h, 150.0, 489.0);
-            press(&mut h, 150.0, 489.0, true);
-            for y in [470.0, 420.0, 360.0, 300.0, 282.0] {
+            mv(&mut h, 150.0, 545.0);
+            press(&mut h, 150.0, 545.0, true);
+            for y in [520.0, 470.0, 410.0, 360.0, 338.0] {
                 mv(&mut h, 150.0, y);
             }
             snap(&mut h, "d5b-arrastando-barra-lateral");
-            press(&mut h, 150.0, 282.0, false);
+            press(&mut h, 150.0, 338.0, false);
             wait(&mut h, 1, |_| false);
             snap(&mut h, "d5c-barra-reordenada");
             assert_eq!(h.state().sidebar_order.first().map(String::as_str), Some("ranking"));
@@ -2747,5 +2839,119 @@ mod tests {
             p.stop();
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    #[ignore]
+    fn selecao_e_pendrive() {
+        let token = std::env::var("ILMARFY_TOKEN").expect("ILMARFY_TOKEN");
+        let dir = std::env::temp_dir().join(format!("ilmarfy-desktop-sel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        write_private(&token_file(&dir), &token);
+        let mut h = Harness::builder()
+            .with_size([1440.0, 900.0])
+            .build_eframe(|cc| App::new(cc, dir.clone()));
+        wait(&mut h, 60, |a| !a.syncing && !a.tracks_cache.is_empty());
+        let artist = std::env::var("ARTISTA").unwrap_or_else(|_| "Ghost".into());
+        h.state_mut().go(View::Artist(artist));
+        wait(&mut h, 3, |_| false);
+        let click = |h: &mut Harness<'_, App>, x: f32, y: f32, modifiers: egui::Modifiers| {
+            h.input_mut().events.push(egui::Event::ModifiersChanged(modifiers));
+            for _ in 0..2 {
+                h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(x, y)));
+                h.step();
+            }
+            for pressed in [true, false] {
+                h.input_mut().events.push(egui::Event::PointerButton {
+                    pos: egui::pos2(x, y),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers,
+                });
+                h.step();
+            }
+            h.input_mut().events.push(egui::Event::ModifiersChanged(Default::default()));
+            h.run_steps(3);
+        };
+        snap(&mut h, "s0-artista");
+        let y0: f32 = std::env::var("ROW_Y").ok().and_then(|v| v.parse().ok()).unwrap_or(452.0);
+        let step = 62.0; // altura da linha + espaçamento
+        click(&mut h, 800.0, y0, Default::default());
+        assert_eq!(h.state().selected.len(), 1, "clique simples seleciona uma");
+        click(&mut h, 800.0, y0 + 2.0 * step, egui::Modifiers::COMMAND);
+        assert_eq!(h.state().selected.len(), 2, "⌘+clique soma");
+        click(&mut h, 800.0, y0 + 3.0 * step, egui::Modifiers::SHIFT);
+        snap(&mut h, "s1-selecao");
+        let n = h.state().selected.len();
+        assert!(n >= 2, "seleção com {n}");
+
+        // Exportar as selecionadas para uma pasta temporária (só lê do servidor)
+        let chosen: Vec<Track> = {
+            let a = h.state();
+            a.view_tracks.iter().filter(|t| a.selected.contains(&t.id)).cloned().collect()
+        };
+        let ctx = h.ctx.clone();
+        h.state_mut().batch_action(&ctx, chosen.clone(), select::Batch::Export);
+        let usb = dir.join("pendrive");
+        std::fs::create_dir_all(&usb).unwrap();
+        h.state_mut().export.dest = usb.display().to_string();
+        h.state_mut().export.layout = export::Layout::Playlist;
+        wait(&mut h, 2, |_| false);
+        snap(&mut h, "s2-exportar");
+        let sources = h.state().export_sources();
+        h.state_mut().start_export(&ctx, sources);
+        wait(&mut h, 120, |a| {
+            a.export.job.as_ref().is_some_and(|j| j.report.lock().unwrap().is_some())
+        });
+        snap(&mut h, "s3-exportado");
+        let files: Vec<PathBuf> = walk(&usb.join("Ilmarfy"));
+        let mp3: Vec<&PathBuf> = files.iter().filter(|f| f.extension().is_some_and(|e| e == "mp3")).collect();
+        assert_eq!(mp3.len(), chosen.len(), "{files:?}");
+        use id3::TagLike;
+        for f in &mp3 {
+            let tag = id3::Tag::read_from_path(f).expect("tag gravada");
+            println!(
+                "{} -> {:?} / {:?} / {:?}, capa: {} bytes",
+                f.display(),
+                tag.title(),
+                tag.artist(),
+                tag.album(),
+                tag.pictures().next().map(|p| p.data.len()).unwrap_or(0)
+            );
+            assert!(tag.title().is_some() && tag.artist().is_some());
+        }
+        // Por playlist a pasta já é a lista (sem .m3u); por artista sai um .m3u da seleção
+        // De novo: nada para copiar
+        let sources = h.state().export_sources();
+        h.state_mut().export.job = None;
+        h.state_mut().start_export(&ctx, sources);
+        wait(&mut h, 60, |a| {
+            a.export.job.as_ref().is_some_and(|j| j.report.lock().unwrap().is_some())
+        });
+        {
+            let job = h.state().export.job.clone().unwrap();
+            let r = job.report.lock().unwrap();
+            let r = r.as_ref().unwrap();
+            assert_eq!((r.copied, r.skipped), (0, chosen.len()), "falhas: {:?}", r.failed);
+        }
+        h.state_mut().selected.clear();
+        h.state_mut().go(View::Offline);
+        wait(&mut h, 2, |_| false);
+        snap(&mut h, "s4-offline");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn walk(d: &std::path::Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    out.extend(walk(&p));
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+        out
     }
 }
