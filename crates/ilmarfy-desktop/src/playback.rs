@@ -92,7 +92,7 @@ pub struct Playback {
 }
 
 /// Arquivos do cache de streaming acima disto são apagados (os mais antigos primeiro)
-const CACHE_LIMIT_BYTES: u64 = 600 * 1024 * 1024;
+const CACHE_LIMIT_BYTES: u64 = 400 * 1024 * 1024;
 
 impl Playback {
     pub fn new(core: Arc<Ilmarfy>, cache_dir: PathBuf) -> Self {
@@ -461,6 +461,10 @@ impl Playback {
             match res {
                 Ok(path) => {
                     self.ready.insert(key.clone(), path.clone());
+                    // Mantém o cache no limite durante o uso (antes só ao abrir o app, e ele crescia
+                    // sem parar numa sessão longa). Nunca apaga um arquivo que a fila vai usar.
+                    let keep: HashSet<PathBuf> = self.ready.values().cloned().collect();
+                    trim_cache_keeping(&self.cache_dir, &keep);
                     if self.current.as_deref() == Some(&key) && self.status == Status::Loading {
                         self.start(&path);
                     }
@@ -525,6 +529,11 @@ fn touch(path: &Path) {
 }
 
 fn trim_cache(dir: &Path) {
+    trim_cache_keeping(dir, &HashSet::new());
+}
+
+/// Apaga os arquivos mais antigos do cache até caber no limite, sem tocar nos de `keep`
+fn trim_cache_keeping(dir: &Path, keep: &HashSet<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
         .filter_map(|e| e.ok())
@@ -540,6 +549,9 @@ fn trim_cache(dir: &Path) {
         if total <= CACHE_LIMIT_BYTES {
             break;
         }
+        if keep.contains(&path) {
+            continue;
+        }
         if std::fs::remove_file(&path).is_ok() {
             total -= len;
         }
@@ -548,8 +560,12 @@ fn trim_cache(dir: &Path) {
 
 #[cfg(test)]
 mod tests {
+    use super::{CACHE_LIMIT_BYTES, trim_cache_keeping};
     use ilmarfy_core::{DEFAULT_SERVER, Ilmarfy, TrackOrder};
     use rodio::Source;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use std::time::Duration;
 
     #[test]
     fn recusar_no_flow_tira_da_fila_e_pula_a_atual() {
@@ -617,5 +633,35 @@ mod tests {
         );
         assert!(samples > 10_000, "a prévia deveria ter áudio decodificável");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cache_respeita_o_limite_e_poupa_a_fila() {
+        let dir = std::env::temp_dir().join(format!("ilmarfy-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mb = vec![0u8; 1024 * 1024];
+        let limit_mb = (CACHE_LIMIT_BYTES / (1024 * 1024)) as usize;
+        // limite + 20 arquivos de 1 MB; o mais antigo é o "na fila"
+        let mut files = Vec::new();
+        for i in 0..limit_mb + 20 {
+            let f = dir.join(format!("{i:04}.mp3"));
+            std::fs::write(&f, &mb).unwrap();
+            let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 + i as u64);
+            std::fs::File::options().write(true).open(&f).unwrap().set_modified(t).unwrap();
+            files.push(f);
+        }
+        let keep: HashSet<PathBuf> = [files[0].clone()].into();
+        trim_cache_keeping(&dir, &keep);
+        let total: u64 = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
+        assert!(total <= CACHE_LIMIT_BYTES, "ficou {total}");
+        assert!(files[0].is_file(), "o arquivo da fila não pode sumir");
+        assert!(!files[1].is_file(), "os mais antigos saem primeiro");
+        assert!(files.last().unwrap().is_file());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
